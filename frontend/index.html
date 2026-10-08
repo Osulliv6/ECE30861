@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>ECE 30861 Group ADA Project</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <header class="app-header">
+    <h1>ECE 30861 Group ADA Project</h1>
+    <button id="connect" class="connection" type="button">
+      <span id="connection-dot" class="status-dot" aria-hidden="true"></span>
+      <span id="connection-label">Connect service</span>
+    </button>
+  </header>
+  <main id="main" tabindex="-1">
+    <div class="workspace">
+      <section class="upload-section" aria-labelledby="upload-heading">
+        <div class="section-heading"><h2 id="upload-heading">Upload document</h2></div>
+        <form id="analyze-form" novalidate>
+          <div id="drop-zone" class="drop-zone">
+            <p class="drop-title">Drop a file here</p>
+            <label class="button secondary browse" for="file-input">
+              Choose file
+              <input id="file-input" name="file" type="file" aria-describedby="formats-hint file-error">
+            </label>
+            <p id="formats-hint" class="format-hint">Connect the service to see supported formats and the upload limit.</p>
+          </div>
+          <div id="file-summary" class="file-summary" hidden>
+            <div class="file-info"><strong id="file-name"></strong><span id="file-meta"></span></div>
+            <button id="remove-file" class="icon-button" type="button" aria-label="Remove selected file">×</button>
+          </div>
+          <p id="file-error" class="field-error" role="alert" hidden></p>
+          <div class="check-options">
+            <label for="wcag-level">WCAG 2.1 level</label>
+            <select id="wcag-level" name="wcag_level"><option value="AA">AA</option><option value="A">A</option></select>
+          </div>
+          <button id="analyze-button" type="submit" class="button primary" disabled>Check accessibility</button>
+          <button id="cancel-button" type="button" class="button secondary" hidden>Cancel check</button>
+          <p id="action-hint" class="action-hint">Connect the analysis service to start a check.</p>
+        </form>
+        <p class="privacy-note">Files are sent when you start a check. No document history is saved in this browser.</p>
+        <details class="scope">
+          <summary>Scope of analysis</summary>
+          <p>The service evaluates its supported WCAG 2.1 checks. Results assist human review and do not certify full ADA or WCAG compliance.</p>
+          <p>Edit the original document yourself, then submit it again to recheck.</p>
+        </details>
+      </section>
+      <section class="results-section" aria-labelledby="results-heading" aria-busy="false">
+        <div class="section-heading results-heading">
+          <h2 id="results-heading">Accessibility report</h2>
+          <button id="export-button" class="text-button" type="button" hidden>Download JSON</button>
+        </div>
+        <div id="notice" class="notice" role="alert" hidden></div>
+        <div id="progress" class="progress" role="status" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <div><h3>Checking document</h3><p>Waiting for the analysis service.</p><span id="elapsed">0 seconds elapsed</span></div>
+        </div>
+        <div id="empty-state" class="empty-state">
+          <h3>No report yet</h3>
+          <p>Upload a document to view its accessibility report.</p>
+          <div class="sample-links">
+            <button id="sample-issues" class="text-button" type="button">Sample report</button>
+            <button id="sample-clean" class="text-button" type="button">No-issue example</button>
+          </div>
+        </div>
+        <div id="report" hidden>
+          <div id="sample-banner" class="sample-banner" hidden>Sample data. No uploaded file was analyzed.</div>
+          <div class="report-overview">
+            <div>
+              <p id="report-label" class="sr-only">Completed review</p>
+              <h3 id="report-title" tabindex="-1"></h3>
+              <p id="report-document"></p>
+            </div>
+            <span id="issue-count" hidden></span>
+          </div>
+          <p id="report-message" class="report-message" hidden></p>
+          <div id="filter-bar" class="filter-bar">
+            <label for="severity-filter">Severity</label>
+            <select id="severity-filter">
+              <option value="all">All findings</option><option value="critical">Critical</option>
+              <option value="serious">Serious</option><option value="moderate">Moderate</option><option value="minor">Minor</option>
+            </select>
+            <span id="filter-count"></span>
+          </div>
+          <div id="findings"></div>
+          <p class="review-note">Results cover the service’s supported checks and do not certify full ADA or WCAG compliance. Review suggested fixes before editing and recheck the revised document.</p>
+          <button id="sample-reset" class="text-button" type="button" hidden>Close sample report</button>
+        </div>
+      </section>
+    </div>
+  </main>
+  <p id="announcer" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+  <dialog id="connection-dialog" aria-labelledby="connection-title">
+    <form id="connection-form">
+      <div class="dialog-heading">
+        <h2 id="connection-title">Analysis service</h2>
+        <button id="close-dialog" class="icon-button" type="button" aria-label="Close connection settings">×</button>
+      </div>
+      <label for="api-url">Service base URL</label>
+      <input id="api-url" type="url" placeholder="https://your-team-api.example.edu" aria-describedby="url-hint connection-error">
+      <p id="url-hint" class="action-hint">Leave blank for the same origin. Localhost is allowed for development. This setting applies only to this page session.</p>
+      <p id="connection-error" class="field-error" role="alert" hidden></p>
+      <button id="save-connection" class="button primary" type="submit">Connect service</button>
+    </form>
+  </dialog>
+</body>
+</html>
