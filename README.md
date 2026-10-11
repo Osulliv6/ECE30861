@@ -75,13 +75,72 @@ The client does not set `Content-Type` for multipart uploads; the browser suppli
 
 There is no automatic document editing, compliance score, account system, report history, or document preview. The backend owns parsing, WCAG detection, remediation generation, file integrity checking, and uploaded-file deletion. The frontend stores no uploads or reports in localStorage, cookies, or a database. Completed uploads are released from frontend state; current results exist only in page memory until replaced or the page closes. Downloading JSON is an explicit user action and creates a local copy.
 
+## Accessibility engine
+
+Kathleen's Phase 3 component lives in `engine/`. It takes the parser's output, checks it against the WCAG 2.1 criteria below, and returns the report JSON that `POST /analyze` sends to the frontend. It has no dependencies and does not read files or make network calls.
+
+```js
+import { analyze, EngineError } from './engine/index.mjs';
+const report = analyze(parsedDocument, { wcagLevel: 'AA' }); // {issues:[...]} or {issues:[], message}
+```
+
+The backend should return `report` unchanged with HTTP 200. `analyze` throws `EngineError`: code `INVALID_PARSED_DOCUMENT` means the parser produced invalid output, and code `INVALID_WCAG_LEVEL` means the request had a bad `wcag_level`. The backend should map these errors to its own error response, for example 503/500 or 400. To try the engine from the command line, run `node engine/cli.mjs tests/fixtures/parsed/syllabus.json [A|AA]`.
+
+### Supported checks
+
+| Criterion | Level | Check | Severity |
+| --- | --- | --- | --- |
+| 1.1.1 Non-text Content | A | Image has no alt text | serious |
+| | | Alt text is a file name or placeholder ("image", `IMG_0042.png`) | serious |
+| | | Alt text starts with "image of" / "picture of" | minor |
+| | | Alt text is longer than 150 characters | minor |
+| 1.3.1 Info and Relationships | A | Heading levels skip (H1 → H3) | moderate |
+| | | First heading is not H1 | minor |
+| | | 1,500+ characters of text and no headings | moderate |
+| | | Large or bold standalone text that looks like an unmarked heading | moderate |
+| | | Data table has no header row or column | moderate |
+| 1.4.3 Contrast (Minimum) | AA | Below 4.5:1 for normal text or 3:1 for large text (18pt+, or 14pt+ bold) | serious if far below the threshold, otherwise moderate |
+| 2.4.2 Page Titled | A | Document title property is missing | moderate |
+| 2.4.4 Link Purpose | A | Link text is empty / generic ("click here", "read more") / a raw URL | serious / moderate / minor |
+| 2.4.6 Headings and Labels | AA | Heading is empty | serious |
+| 3.1.1 Language of Page | A | Document language is missing or invalid | moderate |
+
+With `wcagLevel: 'A'`, the report omits the AA criteria (1.4.3 and 2.4.6). Images with `alt: ""` or `decorative: true` are treated as decorative. The engine skips colors it cannot parse instead of guessing. If an element has `color` but no `background`, the engine assumes a white background. Findings are sorted by page and then line, with document-level findings first.
+
+### Parsed document input (contract with the parser)
+
+The `elements` array is in reading order. Only `type` is required; the engine uses any other fields that are present. It ignores unknown element types and fields, so the parser can send more data than the engine uses.
+
+```json
+{
+  "metadata": {"title": "ECE 30861 Syllabus", "language": "en-US"},
+  "elements": [
+    {"type": "heading", "level": 1, "text": "Syllabus", "location": {"page": 1}},
+    {"type": "text", "text": "Course Policies", "bold": true, "standalone": true, "font_size_pt": 12, "color": "#999999", "background": "#ffffff"},
+    {"type": "image", "alt": null, "decorative": false, "src": "fig1.png", "caption": "Figure 1"},
+    {"type": "link", "text": "click here", "href": "https://example.edu"},
+    {"type": "table", "rows": 5, "has_header_row": false, "has_header_column": false, "layout": false, "caption": "Grades"}
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `heading.level` | Required integer from 1 to 6 |
+| `image.alt` | `null` or missing means no alt text; `""` means decorative |
+| `text.standalone` | `true` when the text is its own paragraph or line; used to detect bold "fake headings" |
+| `color`, `background` | `#rgb`, `#rrggbb`, `rgb(r,g,b)`, `{r,g,b}`, or a basic CSS color name; allowed on any text-bearing element |
+| `font_size_pt`, `bold` | Used to decide whether text is large for contrast purposes |
+| `table.layout` | `true` excludes layout-only tables from the header check |
+| `location` | Optional `{page, line, selector}`; invalid values are dropped. The engine adds a `snippet` from the element text |
+
 ## Verification
 
 ```sh
 npm test
 ```
 
-Seven automated tests cover URL restrictions, discovered formats, file-type and size boundaries, complete/partial report validation, multipart field preservation, HTTP errors, pending responses, timeout, and cancellation. Tests do not require a backend.
+`tests/core.test.mjs` (7 tests) covers URL restrictions, discovered formats, file-type and size boundaries, complete/partial report validation, multipart field preservation, HTTP errors, pending responses, timeout, and cancellation. `tests/engine.test.mjs` (7 tests) covers each engine check, contrast math against WCAG reference values, A/AA filtering, rejection of invalid parser output, and that every engine report passes the frontend's `parseReport()`. Tests do not require a backend.
 
 A deterministic local test service is supplied for UI integration checks:
 
@@ -112,6 +171,7 @@ Actual document analysis, backend cleanup, HTTPS deployment, and AI suggestion q
 - `frontend/core.js`: API client, validation, response parsing, and error handling
 - `frontend/config.js`: backend URL and analysis timeout
 - `frontend/samples.js`: fixed demonstration reports
+- `engine/`: accessibility analysis / WCAG engine (`index.mjs` entry point, `checks.mjs` rules, `contrast.mjs` color math, `cli.mjs`)
 - `server.mjs`: local static preview server
 - `tests/`: automated tests, synthetic fixtures, and test service
 - `UI_HANDOFF.md`: requirements mapping and engineering handoff

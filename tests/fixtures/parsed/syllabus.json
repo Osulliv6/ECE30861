@@ -1,0 +1,14 @@
+{
+  "metadata": {"title": "", "language": "en-US", "page_count": 3},
+  "elements": [
+    {"type": "heading", "level": 1, "text": "ECE 30861 Syllabus", "location": {"page": 1}},
+    {"type": "text", "text": "Course Policies", "bold": true, "font_size_pt": 16, "location": {"page": 1}},
+    {"type": "text", "text": "Late work is accepted for 48 hours with a 10% penalty.", "color": "#999999", "background": "#ffffff", "font_size_pt": 11, "location": {"page": 1}},
+    {"type": "image", "src": "topology.png", "caption": "Figure 1: Network topology", "location": {"page": 2}},
+    {"type": "image", "src": "divider.png", "alt": "", "location": {"page": 2}},
+    {"type": "image", "src": "chart.png", "alt": "IMG_0042.png", "location": {"page": 2}},
+    {"type": "heading", "level": 3, "text": "Grading", "location": {"page": 2}},
+    {"type": "link", "text": "click here", "href": "https://example.edu/rubric", "location": {"page": 2}},
+    {"type": "table", "rows": 5, "columns": 3, "has_header_row": false, "caption": "Grade weights", "location": {"page": 3}}
+  ]
+}
