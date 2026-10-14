@@ -1,6 +1,6 @@
 # ECE 30861 Group ADA Project
 
-Aarnav's Phase 3 UI portion: choose a document, submit it for accessibility analysis, and display the findings. The frontend follows the Phase 2 common HTTP interface and carries forward the faculty/content-creator audience and human-review boundary from Phase 1. Phase 3 assigns the frontend to Aarnav with an October 14 deadline.
+This is a runnable Phase 3 vertical slice: choose an HTML document, submit it for accessibility analysis, and display the findings. The backend validates uploads, parses a deliberately limited HTML subset into the WCAG engine's neutral document model, and returns the shared JSON report. It is stateless: uploaded bytes remain in memory only for the current request and are never written to disk.
 
 ## Run locally
 
@@ -10,13 +10,13 @@ Requires Node.js 18 or newer. There are no npm dependencies to install.
 npm start
 ```
 
-Open http://127.0.0.1:3086. Use **View a sample report** or **View a no-issue example** to inspect the interface without a backend. These are fixed examples, clearly labeled, and never analyze a selected document.
+Open http://127.0.0.1:3086. The same service serves the UI and API, so no connection dialog is needed locally. Use **View a sample report** or **View a no-issue example** to inspect the interface without uploading a document; these are fixed examples and never analyze a selected document.
 
-The standalone preview server serves frontend files only. It is not the team's analysis backend. Uploaded documents are sent only after the user clicks **Check accessibility**.
+Uploaded documents are sent only after the user clicks **Check accessibility**. The server exposes `GET /health`, `GET /formats`, and `POST /analyze`, and returns structured errors for invalid requests.
 
-## Connect the team backend
+## Connect a separately hosted service
 
-Click **Connect service** and enter Gabriel's HTTPS service base URL, or set `API_BASE_URL` in `frontend/config.js`. HTTP is accepted only for loopback development URLs. The base URL may include an API prefix, for example `https://example.edu/api`.
+For a separate deployment, click **Connect service** and enter its HTTPS base URL, or set `API_BASE_URL` in `frontend/config.js`. HTTP is accepted only for loopback development URLs. The base URL may include an API prefix, for example `https://example.edu/api`.
 
 Alternatively, serve the contents of `frontend/` from the team's backend and leave `API_BASE_URL` empty for same-origin requests. Keep the JavaScript MIME type correct and use HTTPS in deployment. If the frontend and backend use separate origins, the backend must allow the frontend's origin through CORS. Authentication is not used by the shared Phase 2 contract; the client omits credentials and contains no AI-provider keys.
 
@@ -48,7 +48,7 @@ An example **complete** successful response:
 
 Each issue requires `wcag_criterion`, `location`, `severity`, `description`, and `suggested_fix`. Location may be `null` or an object containing one or more of `selector`, `line`, `page`, and `snippet`. Line and page values are positive integers. Severity is `critical`, `serious`, `moderate`, or `minor`. A no-issue result is `{"issues":[],"message":"No supported violations were detected. This does not certify full ADA or WCAG compliance."}`. Empty-issue reports must include a nonempty message. The UI displays its own explicit no-issue statement and scope limitation; the backend must also return the required statement and limitation.
 
-The DOCX's Section 5.2 supplies the more precise severity and location fields; it notes these need pod confirmation. Keep `parseReport()` in `frontend/core.js` aligned if the pod adopts different fields. Supported formats remain unresolved in the supplied reports, so the frontend discovers them rather than promising PDF, Word, or other support. Browser MIME types and extensions are only client hints; backend content validation is authoritative.
+The DOCX's Section 5.2 supplies the more precise severity and location fields; it notes these need pod confirmation. Keep `parseReport()` in `frontend/core.js` aligned if the pod adopts different fields. This phase supports `text/html` only; `/formats` is the authoritative discovery endpoint. The service rejects empty, malformed, non-UTF-8, and non-document HTML, does not trust browser filenames, and enforces a 10 MB decimal limit. PDF and Word support are intentionally deferred until a parser is added and tested.
 
 Error responses should use `{"error":{"code":"UNPROCESSABLE_FILE","message":"The file could not be evaluated."}}`. The frontend also accepts a top-level `{code,message}` error on a non-success HTTP status, accommodating the example in the supplied documents.
 
@@ -140,7 +140,7 @@ The `elements` array is in reading order. Only `type` is required; the engine us
 npm test
 ```
 
-`tests/core.test.mjs` (7 tests) covers URL restrictions, discovered formats, file-type and size boundaries, complete/partial report validation, multipart field preservation, HTTP errors, pending responses, timeout, and cancellation. `tests/engine.test.mjs` (7 tests) covers each engine check, contrast math against WCAG reference values, A/AA filtering, rejection of invalid parser output, and that every engine report passes the frontend's `parseReport()`. Tests do not require a backend.
+`tests/core.test.mjs` covers URL restrictions, discovered formats, file-type and size boundaries, complete/partial report validation, multipart field preservation, HTTP errors, pending responses, timeout, and cancellation. `tests/engine.test.mjs` covers each engine check, contrast math against WCAG reference values, A/AA filtering, rejection of invalid parser output, and that every engine report passes the frontend's `parseReport()`. `tests/backend.test.mjs` starts the actual local service on an ephemeral loopback port and verifies health, format discovery, CORS, UI serving, successful HTML analysis, WCAG-level filtering, and malformed/unsupported upload responses.
 
 A deterministic local test service is supplied for UI integration checks:
 
@@ -161,7 +161,7 @@ Connect the preview to `http://127.0.0.1:3087`. **This is a test double, not an 
 | `empty.html` | Client rejects zero bytes |
 | `unsupported.exe` | Client rejects unsupported type |
 
-Actual document analysis, backend cleanup, HTTPS deployment, and AI suggestion quality require the real team service. The UI itself has not been certified for WCAG conformance; keyboard support and visual checks are implementation evidence, not a full assistive-technology audit.
+Actual document analysis for the supported HTML scope runs in this service. HTTPS deployment and support for further formats remain deployment/next-phase work. The UI itself has not been certified for WCAG conformance; keyboard support and visual checks are implementation evidence, not a full assistive-technology audit.
 
 ## Files
 
@@ -172,7 +172,7 @@ Actual document analysis, backend cleanup, HTTPS deployment, and AI suggestion q
 - `frontend/config.js`: backend URL and analysis timeout
 - `frontend/samples.js`: fixed demonstration reports
 - `engine/`: accessibility analysis / WCAG engine (`index.mjs` entry point, `checks.mjs` rules, `contrast.mjs` color math, `cli.mjs`)
-- `server.mjs`: local static preview server
+- `server.mjs`: stateless API, HTML-to-engine adapter, CORS handling, and static UI server
 - `tests/`: automated tests, synthetic fixtures, and test service
 - `UI_HANDOFF.md`: requirements mapping and engineering handoff
 
