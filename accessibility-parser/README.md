@@ -25,13 +25,9 @@ The CLI prints a single JSON object. A failure prints `{"error":{"code":"...","m
 
 ## Integration in the group repo
 
-Copy `parser/`, `requirements.txt`, and `integration.mjs` into the root of `Osulliv6/ECE30861`, next to `engine/`. Gabriel's backend should take the already uploaded and validated file, call:
+`server.mjs` calls `parseUpload(bytes, extension)` from `integration.mjs`. That function writes the validated upload to a private temporary directory, runs `python -m parser.cli` from this folder with a 25-second timeout, and deletes the directory in a `finally` block. Parser errors map to HTTP 422 (unreadable document) or 415 (unsupported type). A missing, crashing, or timed-out parser maps to 503. Create the virtual environment at `accessibility-parser/.venv`, which the server finds automatically, or set `PYTHON`.
 
-```js
-import { analyzeUploadedDocument } from './integration.mjs';
-const report = await analyzeUploadedDocument(tempFilePath, wcag_level ?? 'AA');
-// Return HTTP 200 and report unchanged. Always delete tempFilePath in finally.
-```
+The CLI redirects library output to stderr while parsing, so stdout contains only the JSON result. PyMuPDF 1.28 prints a deprecation warning to stdout when `fitz` is imported, which would otherwise break the JSON output, so the parser imports `pymupdf`.
 
 Example shape passed to the engine:
 
@@ -52,7 +48,7 @@ Example shape passed to the engine:
 - `location.line` for DOCX means **body element sequence**, not an actual visual line. Page positions cannot be extracted without rendering. HTML `line` is **element visitation order**, not source-code line.
 - DOCX detects table headers only where Word explicitly marks header rows. It will not assume first-row text is a semantic header.
 - DOCX complex text-boxes, floating images, equations, headers/footers, comments, and some drawings aren't fully covered.
-- PDF is intentionally conservative: untagged lines aren't assigned fake heading levels; scanned PDFs need separate OCR and tagging analysis. Image `alt:null` is an **unknown** value but the current engine can interpret it as missing; the team should consider suppressing that inference for PDF or adding confidence metadata.
+- PDF is intentionally conservative: untagged lines aren't assigned fake heading levels; scanned PDFs need separate OCR and tagging analysis. PDF and TXT output sets `metadata.not_extracted` (for example `["alt_text","headings","tables"]` for PDF). The engine then skips those checks instead of reporting unknown values as missing.
 - Basic inline style extraction is not computed CSS; do not treat it as complete contrast inspection.
 - No file is uploaded to third parties. No LLM API is called.
 

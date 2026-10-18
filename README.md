@@ -1,14 +1,18 @@
 # ECE 30861 Group ADA Project
 
-This is a runnable Phase 3 vertical slice: choose an HTML document, submit it for accessibility analysis, and display the findings. The backend validates uploads, parses a deliberately limited HTML subset into the WCAG engine's neutral document model, and returns the shared JSON report. It is stateless: uploaded bytes remain in memory only for the current request and are never written to disk.
+This is a runnable Phase 3 system: choose an HTML, PDF, DOCX, or plain-text document, submit it for accessibility analysis, and display the findings. The Node server validates the upload (size, type, and that the content really is that format), passes it to Prathum's Python parser (`accessibility-parser/`), runs the WCAG engine (`engine/`) on the parsed structure, and returns the shared JSON report. Each upload is written to a private temporary directory only for the parser run and is deleted afterwards, whether parsing succeeds or fails.
 
 ## Run locally
 
-Requires Node.js 18 or newer. There are no npm dependencies to install.
+Requires Node.js 18 or newer (no npm dependencies) and Python 3.10 or newer for the parser. Create the parser's virtual environment once:
 
 ```sh
+python3 -m venv accessibility-parser/.venv
+accessibility-parser/.venv/bin/pip install -r accessibility-parser/requirements.txt
 npm start
 ```
+
+The server uses `accessibility-parser/.venv` automatically when it exists. Otherwise, set `PYTHON` to an interpreter with the parser's packages installed. If no working parser is available, `/analyze` returns HTTP 503.
 
 Open http://127.0.0.1:3086. The same service serves the UI and API, so no connection dialog is needed locally. Use **View a sample report** or **View a no-issue example** to inspect the interface without uploading a document; these are fixed examples and never analyze a selected document.
 
@@ -20,7 +24,20 @@ For a separate deployment, click **Connect service** and enter its HTTPS base UR
 
 Alternatively, serve the contents of `frontend/` from the team's backend and leave `API_BASE_URL` empty for same-origin requests. Keep the JavaScript MIME type correct and use HTTPS in deployment. If the frontend and backend use separate origins, the backend must allow the frontend's origin through CORS. Authentication is not used by the shared Phase 2 contract; the client omits credentials and contains no AI-provider keys.
 
-The target repository is [Osulliv6/ECE30861](https://github.com/Osulliv6/ECE30861). It contained no commits before this frontend was prepared. The backend implementation, deployment URL, actual format support, and CORS behavior have not yet been verified.
+The target repository is [Osulliv6/ECE30861](https://github.com/Osulliv6/ECE30861).
+
+## Deploy
+
+The `Dockerfile` builds one container holding the UI, API, engine, and parser (Node 22 and Python 3.11). Any container host that provides HTTPS works, for example Render, Railway, or Fly.io: point it at this repository and choose the Dockerfile. The container listens on `0.0.0.0:$PORT`, using port 8080 when the host does not set `PORT`. Because the UI and API share one origin, no CORS settings are required. If the frontend is hosted elsewhere, set `CORS_ORIGINS` to a comma-separated list of allowed origins.
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | 3086 locally, 8080 in Docker | Listening port |
+| `HOST` | `127.0.0.1` locally, `0.0.0.0` in Docker | Listening address |
+| `PYTHON` | `accessibility-parser/.venv/bin/python`, then `python3` | Parser interpreter |
+| `CORS_ORIGINS` | the local preview origins | Extra allowed browser origins |
+
+After each deployment, run `./scripts/smoke-test.sh https://<your-service>`. It checks `/health`, `/formats`, the UI, and real DOCX and PDF analysis.
 
 ### Required endpoints
 
@@ -84,7 +101,7 @@ import { analyze, EngineError } from './engine/index.mjs';
 const report = analyze(parsedDocument, { wcagLevel: 'AA' }); // {issues:[...]} or {issues:[], message}
 ```
 
-The backend should return `report` unchanged with HTTP 200. `analyze` throws `EngineError`: code `INVALID_PARSED_DOCUMENT` means the parser produced invalid output, and code `INVALID_WCAG_LEVEL` means the request had a bad `wcag_level`. The backend should map these errors to its own error response, for example 503/500 or 400. To try the engine from the command line, run `node engine/cli.mjs tests/fixtures/parsed/syllabus.json [A|AA]`.
+`server.mjs` returns `report` unchanged with HTTP 200. `analyze` throws `EngineError`: code `INVALID_PARSED_DOCUMENT` means the parser produced invalid output, and code `INVALID_WCAG_LEVEL` means the request had a bad `wcag_level`. The backend should map these errors to its own error response, for example 503/500 or 400. To try the engine from the command line, run `node engine/cli.mjs tests/fixtures/parsed/syllabus.json [A|AA]`.
 
 ### Supported checks
 
@@ -110,6 +127,8 @@ With `wcagLevel: 'A'`, the report omits the AA criteria (1.4.3 and 2.4.6). Image
 ### Parsed document input (contract with the parser)
 
 The `elements` array is in reading order. Only `type` is required; the engine uses any other fields that are present. It ignores unknown element types and fields, so the parser can send more data than the engine uses.
+
+`metadata.not_extracted` lists things the parser could not observe for this format. The engine skips the matching checks so that "unknown" is never reported as "missing". The values are `alt_text`, `headings`, `tables`, `title`, and `language`. The parser sends `["alt_text","headings","tables"]` for PDF, because it does not read tagged-PDF semantics. For plain text it sends all five values, because plain text cannot contain any of these.
 
 ```json
 {
@@ -140,7 +159,9 @@ The `elements` array is in reading order. Only `type` is required; the engine us
 npm test
 ```
 
-`tests/core.test.mjs` covers URL restrictions, discovered formats, file-type and size boundaries, complete/partial report validation, multipart field preservation, HTTP errors, pending responses, timeout, and cancellation. `tests/engine.test.mjs` covers each engine check, contrast math against WCAG reference values, A/AA filtering, rejection of invalid parser output, and that every engine report passes the frontend's `parseReport()`. `tests/backend.test.mjs` starts the actual local service on an ephemeral loopback port and verifies health, format discovery, CORS, UI serving, successful HTML analysis, WCAG-level filtering, and malformed/unsupported upload responses.
+`tests/core.test.mjs` covers URL restrictions, discovered formats, file-type and size boundaries, complete/partial report validation, multipart field preservation, HTTP errors, pending responses, timeout, and cancellation. `tests/engine.test.mjs` covers each engine check, contrast math against WCAG reference values, A/AA filtering, rejection of invalid parser output, and that every engine report passes the frontend's `parseReport()`. `tests/backend.test.mjs` starts the actual local service on an ephemeral loopback port and verifies health, format discovery, CORS, UI serving, successful HTML analysis, WCAG-level filtering, and malformed/unsupported upload responses. `tests/integration.test.mjs` runs end to end through the Python parser. It uploads real DOCX, PDF, and TXT files from `tests/fixtures/documents/` and checks that each report contains the expected findings and passes `parseReport()`. It also covers MIME fallback by file extension, corrupt, encrypted, mismatched, and non-UTF-8 files (422), temp-file deletion, a missing or hung parser (503), oversized and malformed uploads, CORS preflight, and path-traversal attempts.
+
+Parser tests run separately: `cd accessibility-parser && .venv/bin/python -m pytest -q`. To regenerate the document fixtures, run `accessibility-parser/.venv/bin/python tests/fixtures/documents/make_fixtures.py`. GitHub Actions (`.github/workflows/test.yml`) runs both test suites on every push, then builds the Docker image and runs the smoke test against it.
 
 A deterministic local test service is supplied for UI integration checks:
 
@@ -161,7 +182,7 @@ Connect the preview to `http://127.0.0.1:3087`. **This is a test double, not an 
 | `empty.html` | Client rejects zero bytes |
 | `unsupported.exe` | Client rejects unsupported type |
 
-Actual document analysis for the supported HTML scope runs in this service. HTTPS deployment and support for further formats remain deployment/next-phase work. The UI itself has not been certified for WCAG conformance; keyboard support and visual checks are implementation evidence, not a full assistive-technology audit.
+PDF analysis is partial: alt text, headings, and tables in tagged PDFs are not read, so those checks are skipped for PDFs instead of guessed. Contrast checks use only inline or run-level colors, not external CSS or rendered backgrounds. The UI itself has not been certified for WCAG conformance; keyboard support and visual checks are implementation evidence, not a full assistive-technology audit.
 
 ## Files
 
@@ -172,7 +193,9 @@ Actual document analysis for the supported HTML scope runs in this service. HTTP
 - `frontend/config.js`: backend URL and analysis timeout
 - `frontend/samples.js`: fixed demonstration reports
 - `engine/`: accessibility analysis / WCAG engine (`index.mjs` entry point, `checks.mjs` rules, `contrast.mjs` color math, `cli.mjs`)
-- `server.mjs`: stateless API, HTML-to-engine adapter, CORS handling, and static UI server
+- `server.mjs`: API (upload validation, content-type checks, error mapping), CORS handling, and static UI server
+- `accessibility-parser/`: Prathum's Python document parser; `integration.mjs` is the Node bridge (temp file, timeout, cleanup)
+- `Dockerfile`, `scripts/smoke-test.sh`, `.github/workflows/test.yml`: deployment, post-deploy check, and CI
 - `tests/`: automated tests, synthetic fixtures, and test service
 - `UI_HANDOFF.md`: requirements mapping and engineering handoff
 

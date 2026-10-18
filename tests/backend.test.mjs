@@ -19,7 +19,7 @@ async function upload(content, {type = 'text/html', name = 'document.html', leve
 
 test('health, formats, static UI, and CORS form a runnable local service', async () => {
   assert.deepEqual(await (await fetch(`${base}/health`)).json(), {status:'ok'});
-  assert.deepEqual(await (await fetch(`${base}/formats`)).json(), {supported_mime_types:['text/html'],max_file_size_mb:10});
+  assert.deepEqual(await (await fetch(`${base}/formats`)).json(), {supported_mime_types:['text/html','application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','text/plain'],max_file_size_mb:10});
   const ui = await fetch(`${base}/`); assert.equal(ui.status, 200); assert.match(await ui.text(), /ECE 30861 Group ADA Project/);
   const cors = await fetch(`${base}/formats`, {headers:{Origin:'http://127.0.0.1:3086'}}); assert.equal(cors.headers.get('access-control-allow-origin'),'http://127.0.0.1:3086');
 });
@@ -39,7 +39,8 @@ test('upload boundary errors are stable JSON and never return a report', async (
   for (const [content, options, status, code] of [
     ['', {}, 422, 'UNPROCESSABLE_FILE'],
     ['plain text', {}, 422, 'UNPROCESSABLE_FILE'],
-    ['<html></html>', {type:'application/pdf',name:'paper.pdf'}, 415, 'UNSUPPORTED_MEDIA_TYPE'],
+    ['PK', {type:'application/zip',name:'slides.zip'}, 415, 'UNSUPPORTED_MEDIA_TYPE'],
+    ['<html></html>', {type:'application/pdf',name:'paper.pdf'}, 422, 'UNPROCESSABLE_FILE'],
     ['<!doctype html><html></html>', {level:'AAA'}, 400, 'INVALID_WCAG_LEVEL'],
   ]) { const response = await upload(content,options); assert.equal(response.status,status); const body = await response.json(); assert.equal(body.error.code,code); assert.equal(body.issues,undefined); }
 });

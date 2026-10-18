@@ -196,10 +196,12 @@ def _html(path):
                                           'JavaScript-generated document content is not executed']}}
 
 def _pdf(path):
-    import fitz
+    import pymupdf as fitz
     doc=fitz.open(path)
     if doc.needs_pass: raise ParseError('UNPROCESSABLE_FILE','Password-protected PDFs are not supported.')
-    metadata={'title':_clean(doc.metadata.get('title')),'language':None,'format':'pdf'}
+    # Heading, table and alt-text semantics are not read from PDF tags; the engine skips those checks.
+    metadata={'title':_clean(doc.metadata.get('title')),'language':None,'format':'pdf',
+              'not_extracted':['alt_text','headings','tables']}
     try:
         lang=doc.pdf_catalog() and doc.xref_get_key(doc.pdf_catalog(),'Lang')
         if lang and lang[0]=='string': metadata['language']=lang[1].strip('()')
@@ -244,7 +246,9 @@ def _txt(path):
     raw=Path(path).read_text(encoding='utf-8-sig')
     elements=[{'type':'text','text':line.strip(),'standalone':True,'location':{'line':i}}
               for i,line in enumerate(raw.splitlines(),1) if line.strip()]
-    return {'metadata':{'title':'','language':None,'format':'txt'},'elements':elements,
+    # Plain text cannot carry a title, language, headings, images or tables, so none can be missing.
+    return {'metadata':{'title':'','language':None,'format':'txt',
+                        'not_extracted':['title','language','headings','alt_text','tables']},'elements':elements,
             'parser_info':{'format':'txt','reading_order':'line order',
                            'limitations':['Plain text has no semantic headings, alt text, styling, tables, or metadata']}}
 

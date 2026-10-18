@@ -26,6 +26,8 @@ export function validateParsedDocument(doc) {
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new EngineError('The parsed document must be an object.');
   if (!Array.isArray(doc.elements)) throw new EngineError('The parsed document must include an "elements" array.');
   if (doc.metadata !== undefined && doc.metadata !== null && (typeof doc.metadata !== 'object' || Array.isArray(doc.metadata))) throw new EngineError('"metadata" must be an object when provided.');
+  const notExtracted = doc.metadata?.not_extracted;
+  if (notExtracted !== undefined && !(Array.isArray(notExtracted) && notExtracted.every(v=>typeof v === 'string'))) throw new EngineError('"metadata.not_extracted" must be an array of strings when provided.');
   doc.elements.forEach((el,i)=>{
     if (!el || typeof el !== 'object' || typeof el.type !== 'string') throw new EngineError(`Element ${i} must be an object with a string "type".`);
     if (el.type === 'heading' && !(Number.isInteger(el.level) && el.level >= 1 && el.level <= 6)) throw new EngineError(`Heading element ${i} must have an integer "level" from 1 to 6.`);

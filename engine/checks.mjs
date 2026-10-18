@@ -20,6 +20,10 @@ export function locate(el, text) {
   return Object.keys(loc).length ? loc : null;
 }
 
+// The parser lists semantics it could not observe (e.g. PDF alt text). Checks that depend
+// on them are skipped, so "unknown" is never reported as "missing".
+const notExtracted = (doc, what) => Array.isArray(doc.metadata?.not_extracted) && doc.metadata.not_extracted.includes(what);
+
 const finding = (wcag_criterion, severity, el, text, description, suggested_fix) =>
   ({wcag_criterion, severity, location:locate(el,text), description, suggested_fix});
 
@@ -32,6 +36,7 @@ const ALT_LONG = 150;
 
 export function checkAltText(doc) {
   const out = [];
+  if (notExtracted(doc,'alt_text')) return out;
   for (const el of doc.elements) {
     if (el.type !== 'image' || el.decorative === true) continue;
     const label = el.caption || el.src || el.alt || 'Image';
@@ -70,6 +75,7 @@ const looksLikeFakeHeading = el => {
 
 export function checkHeadings(doc) {
   const out = [];
+  if (notExtracted(doc,'headings')) return out;
   const headings = doc.elements.filter(el=>el.type === 'heading');
   const textChars = doc.elements.filter(el=>el.type === 'text').reduce((n,el)=>n+String(el.text ?? '').length,0);
 
@@ -165,6 +171,7 @@ export function checkLinks(doc) {
 
 export function checkTables(doc) {
   const out = [];
+  if (notExtracted(doc,'tables')) return out;
   for (const el of doc.elements) {
     if (el.type !== 'table' || el.layout === true) continue;
     const rows = Number.isInteger(el.rows) ? el.rows : Array.isArray(el.cells) ? el.cells.length : null;
@@ -183,12 +190,12 @@ export function checkTables(doc) {
 export function checkMetadata(doc) {
   const out = [];
   const meta = doc.metadata || {};
-  if (typeof meta.title !== 'string' || !meta.title.trim()) {
+  if (!notExtracted(doc,'title') && (typeof meta.title !== 'string' || !meta.title.trim())) {
     out.push(finding('2.4.2','moderate',null,'',
       'The document has no title in its properties.',
       'Set a descriptive title in the document’s properties so it is announced when the document opens.'));
   }
-  if (typeof meta.language !== 'string' || !/^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(meta.language.trim())) {
+  if (!notExtracted(doc,'language') && (typeof meta.language !== 'string' || !/^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(meta.language.trim()))) {
     out.push(finding('3.1.1','moderate',null,'',
       'The document’s primary language is not specified.',
       'Set the document language (for example, “en-US”) so screen readers use the correct pronunciation.'));

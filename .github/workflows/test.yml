@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parser dependencies
+        run: pip install -r accessibility-parser/requirements.txt
+      - name: Parser tests (pytest)
+        working-directory: accessibility-parser
+        run: python -m pytest -q
+      - name: Frontend, engine, backend and end-to-end tests
+        run: npm test
+        env:
+          PYTHON: python
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t ada-service .
+      - name: Run image and smoke test
+        run: |
+          docker run -d -p 8080:8080 --name ada ada-service
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
+          ./scripts/smoke-test.sh http://127.0.0.1:8080
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs ada

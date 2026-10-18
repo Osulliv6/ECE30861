@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": {"start": "node server.mjs", "test": "node --test tests/core.test.mjs tests/engine.test.mjs tests/backend.test.mjs"},
+  "scripts": {"start": "node server.mjs", "test": "node --test tests/core.test.mjs tests/engine.test.mjs tests/backend.test.mjs tests/integration.test.mjs"},
   "engines": {"node": ">=18"}
 }

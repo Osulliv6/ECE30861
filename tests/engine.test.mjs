@@ -59,3 +59,10 @@ test('invalid parser output is rejected; locations stay contract-valid',()=>{
   assert.deepEqual(r.issues.map(i=>i.location),[{snippet:'Image'},{snippet:'Link'},{line:12,selector:'#a',snippet:'here'}]);
   assert.equal(parseReport(r),r);
 });
+test('checks the parser could not observe are skipped instead of reported as missing',()=>{
+  const pdf={metadata:{title:'T',language:'en',not_extracted:['alt_text','headings','tables']},elements:[{type:'image',alt:null},{type:'heading',level:3,text:'Late'},{type:'text',text:'Big title',font_size_pt:20},{type:'table',rows:4},{type:'link',text:'here'}]};
+  assert.deepEqual(criteria(analyze(pdf)),['2.4.4']);
+  assert.deepEqual(analyze({metadata:{not_extracted:['title','language']},elements:[]}).issues,[]);
+  assert.deepEqual(criteria(analyze({metadata:{not_extracted:[]},elements:[]})),['2.4.2','3.1.1']);
+  for(const bad of ['alt_text',[1],{}])assert.throws(()=>analyze({metadata:{not_extracted:bad},elements:[]}),EngineError);
+});
