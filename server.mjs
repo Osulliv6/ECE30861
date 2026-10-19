@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { analyze, EngineError } from './engine/index.mjs';
 import { parseUpload, ParserError } from './accessibility-parser/integration.mjs';
+import { createSystemInterface, TestInterfaceError } from './testing/system.mjs';
+import { createTesterInterface } from './testing/tester.mjs';
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(moduleDir, 'frontend');
@@ -14,7 +16,7 @@ function sendJson(res, status, body, headers = {}) {
   res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff', ...headers});
   res.end(JSON.stringify(body));
 }
-function failure(res, status, code, message) { sendJson(res, status, {error:{code,message}}); }
+function failure(res, status, code, message) { res.logFields = {...res.logFields, error_code:code}; sendJson(res, status, {error:{code,message}}); }
 const utf8 = bytes => { try { return new TextDecoder('utf-8',{fatal:true}).decode(bytes); } catch { return null; } };
 // Each supported type: the extension the parser expects and a check that the bytes really are that format.
 // Browser MIME types are only hints, so the content check is authoritative.
@@ -54,18 +56,62 @@ async function analyzeRequest(req, res, parserOptions) {
     return sendJson(res,200,analyze(await parseUpload(file.data,FORMATS[type].ext,parserOptions),{wcagLevel:level}));
   } catch (error) {
     if (error?.code === 'FILE_TOO_LARGE') return failure(res,413,'FILE_TOO_LARGE','The file exceeds the 10 MB service limit.');
-    if (error instanceof ParserError) return failure(res,error.status,error.code,error.message);
-    if (error instanceof EngineError) return failure(res,503,'PROCESSING_UNAVAILABLE','The file could not be evaluated.');
+    if (error instanceof ParserError) { res.logFields = {detail:error.message}; return failure(res,error.status,error.code,error.message); }
+    if (error instanceof EngineError) { res.logFields = {detail:error.message}; return failure(res,503,'PROCESSING_UNAVAILABLE','The file could not be evaluated.'); }
     return failure(res,400,'MALFORMED_REQUEST','The upload could not be read.');
   }
 }
 
+// Cross-team testing interface: errors use {message, source} as the course spec requires.
+async function readJson(req, source) {
+  try { return JSON.parse((await readBody(req,65_536)).toString('utf8') || 'null'); }
+  catch { throw new TestInterfaceError(400,'Request body must be valid JSON.',source); }
+}
+async function testEndpoint(res, source, operation) {
+  try {
+    const {status, body} = await operation();
+    // Tester runs log an outcome summary so failures in cross-team runs are visible.
+    if (Array.isArray(body?.results)) res.logFields = {outcomes:Object.fromEntries(['pass','fail','error','skip'].map(o=>[o,body.results.filter(r=>r.outcome===o).length]))};
+    sendJson(res,status,body);
+  } catch (error) {
+    res.logFields = {error_source:error.source || source, detail:error.message};
+    if (error instanceof TestInterfaceError) return sendJson(res,error.status,{message:error.message,source:error.source});
+    sendJson(res,500,{message:'Unexpected service failure.',source});
+  }
+}
+const TEST_ROUTES = {
+  '/test/setup':{method:'POST',source:'system',run:(api,req)=>readJson(req,'system').then(body=>api.system.setup(body))},
+  '/test/report':{method:'GET',source:'system',run:(api,req,url)=>api.system.report(url.searchParams.get('session_id'))},
+  '/tester/test/setup':{method:'POST',source:'tester',run:(api,req)=>readJson(req,'tester').then(body=>api.tester.setup(body))},
+  '/tester/test/run':{method:'POST',source:'tester',run:(api,req)=>readJson(req,'tester').then(body=>api.tester.run(body))},
+  '/tester/test/report':{method:'GET',source:'tester',run:(api,req,url)=>api.tester.report(url.searchParams.get('session_id'))},
+};
+
 // parserOptions: {python, timeoutMs, tmpRoot} for the Python parser bridge (defaults suit production).
-export function createServer({allowedOrigins = (process.env.CORS_ORIGINS || 'http://127.0.0.1:3086,http://localhost:3086').split(','), parserOptions = {}} = {}) {
+// One JSON line per request. Uploaded file names and contents are never logged; error details may name a test session ID.
+// Successful health checks and static files are skipped to keep the hosting platform's checks out of the log.
+function logRequest(log, req, res, path, started) {
+  res.on('finish', () => {
+    const isStatic = !TEST_ROUTES[path] && !['/health','/formats','/analyze'].includes(path);
+    if (res.statusCode < 400 && (path === '/health' || isStatic)) return;
+    log(JSON.stringify({time:new Date().toISOString(), method:req.method, path, status:res.statusCode, duration_ms:Math.round(performance.now() - started), ...res.logFields}));
+  });
+}
+
+// testerOptions: {timeoutMs} for calls the tester makes to a target system. log: receives each log line.
+export function createServer({allowedOrigins = (process.env.CORS_ORIGINS || 'http://127.0.0.1:3086,http://localhost:3086').split(','), parserOptions = {}, testerOptions = {}, log = line => console.log(line)} = {}) {
+  const testApi = {system:createSystemInterface(), tester:createTesterInterface(testerOptions)};
   return http.createServer(async (req,res) => {
+    const started = performance.now();
+    logRequest(log, req, res, new URL(req.url,'http://localhost').pathname, started);
     setCors(req,res,allowedOrigins);
     if (req.method === 'OPTIONS') { res.writeHead(204,{'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Access-Control-Max-Age':'600'}); return res.end(); }
-    const path = new URL(req.url,'http://localhost').pathname;
+    const url = new URL(req.url,'http://localhost'), path = url.pathname;
+    const route = TEST_ROUTES[path];
+    if (route) {
+      if (req.method !== route.method) return sendJson(res,405,{message:`Use ${route.method} for ${path}.`,source:route.source},{Allow:route.method});
+      return testEndpoint(res,route.source,()=>route.run(testApi,req,url));
+    }
     if (req.method === 'GET' && path === '/health') return sendJson(res,200,{status:'ok'});
     if (req.method === 'GET' && path === '/formats') return sendJson(res,200,{supported_mime_types:SUPPORTED_MIME_TYPES,max_file_size_mb:10});
     if (req.method === 'POST' && path === '/analyze') return analyzeRequest(req,res,parserOptions);
@@ -74,4 +120,4 @@ export function createServer({allowedOrigins = (process.env.CORS_ORIGINS || 'htt
   });
 }
 // HOST defaults to loopback for local use; deployments set HOST=0.0.0.0 (see Dockerfile).
-if (process.argv[1] === fileURLToPath(import.meta.url)) { const port = Number(process.env.PORT || 3086); const host = process.env.HOST || '127.0.0.1'; createServer().listen(port,host,()=>console.log(`Accessibility service: http://${host}:${port}`)); }
+if (process.argv[1] === fileURLToPath(import.meta.url)) { const port = Number(process.env.PORT || 3086); const host = process.env.HOST || '127.0.0.1'; createServer().listen(port,host,()=>console.log(JSON.stringify({time:new Date().toISOString(), event:'started', url:`http://${host}:${port}`, commit:process.env.RENDER_GIT_COMMIT || 'local'}))); }

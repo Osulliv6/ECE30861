@@ -1,0 +1,177 @@
+openapi: 3.1.1
+info:
+  title: ECE 30861 ADA Accessibility System
+  version: 1.0.0
+  description: >
+    Project API (health, formats, analyze) plus the system side of the cross-team
+    testing interface (/test/setup, /test/report). The project API is stateless, so
+    project requests do not carry a session ID.
+servers:
+  - url: https://ece30861-ada.onrender.com
+paths:
+  /health:
+    get:
+      summary: Service health check
+      responses:
+        '200':
+          description: Service is running
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, const: ok}
+  /formats:
+    get:
+      summary: Supported upload formats and size limit
+      responses:
+        '200':
+          description: Supported MIME types and maximum upload size
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [supported_mime_types, max_file_size_mb]
+                properties:
+                  supported_mime_types:
+                    type: array
+                    minItems: 1
+                    items: {type: string}
+                  max_file_size_mb: {type: number, minimum: 10}
+  /analyze:
+    post:
+      summary: Analyze one document for WCAG 2.1 issues
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+                wcag_level: {type: string, enum: [A, AA], default: AA}
+      responses:
+        '200':
+          description: Complete accessibility report
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Report'}
+        '400': {$ref: '#/components/responses/ProjectError'}
+        '413': {$ref: '#/components/responses/ProjectError'}
+        '415': {$ref: '#/components/responses/ProjectError'}
+        '422': {$ref: '#/components/responses/ProjectError'}
+        '503': {$ref: '#/components/responses/ProjectError'}
+  /test/setup:
+    post:
+      summary: Register a test session and return its ID when ready
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id: {type: string, minLength: 1}
+                setup: {type: object}
+      responses:
+        '201':
+          description: Session ready
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session_id]
+                properties:
+                  session_id: {type: string, minLength: 1}
+        '400': {$ref: '#/components/responses/TestError'}
+        '409': {$ref: '#/components/responses/TestError'}
+        '500': {$ref: '#/components/responses/TestError'}
+  /test/report:
+    get:
+      summary: Code coverage measured for a session
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Coverage for the session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session_id, coverage]
+                properties:
+                  session_id: {type: string}
+                  coverage:
+                    type: object
+                    required: [code]
+                    properties:
+                      code: {$ref: '#/components/schemas/CoverageMeasure'}
+        '400': {$ref: '#/components/responses/TestError'}
+        '404': {$ref: '#/components/responses/TestError'}
+components:
+  schemas:
+    Report:
+      type: object
+      required: [issues]
+      description: An empty issues array requires a nonempty message.
+      properties:
+        issues:
+          type: array
+          items:
+            type: object
+            required: [wcag_criterion, location, severity, description, suggested_fix]
+            properties:
+              wcag_criterion: {type: string, pattern: '^\d+\.\d+\.\d+$'}
+              location:
+                oneOf:
+                  - type: 'null'
+                  - type: object
+                    minProperties: 1
+                    properties:
+                      selector: {type: string}
+                      line: {type: integer, minimum: 1}
+                      page: {type: integer, minimum: 1}
+                      snippet: {type: string}
+              severity: {type: string, enum: [critical, serious, moderate, minor]}
+              description: {type: string, minLength: 1}
+              suggested_fix: {type: string, minLength: 1}
+        message: {type: string, minLength: 1}
+    CoverageMeasure:
+      type: object
+      required: [covered, total, basis]
+      properties:
+        covered: {type: ['integer', 'null'], minimum: 0}
+        total: {type: ['integer', 'null'], minimum: 0}
+        basis: {type: string, minLength: 1}
+    TestErrorBody:
+      type: object
+      required: [message, source]
+      properties:
+        message: {type: string, minLength: 1}
+        source: {type: string, enum: [tester, system, communication, unknown]}
+  responses:
+    ProjectError:
+      description: Project API error
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties:
+                  code: {type: string}
+                  message: {type: string, minLength: 1}
+    TestError:
+      description: Testing interface error
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/TestErrorBody'}

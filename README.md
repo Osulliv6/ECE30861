@@ -37,7 +37,9 @@ The `Dockerfile` builds one container holding the UI, API, engine, and parser (N
 | `PYTHON` | `accessibility-parser/.venv/bin/python`, then `python3` | Parser interpreter |
 | `CORS_ORIGINS` | the local preview origins | Extra allowed browser origins |
 
-After each deployment, run `./scripts/smoke-test.sh https://<your-service>`. It checks `/health`, `/formats`, the UI, and real DOCX and PDF analysis.
+**Logs:** The server writes one JSON line per request to standard output, which appears in the hosting platform's log view (the Render dashboard's **Logs** tab). Each line records the time, method, path, status, and duration, plus the error code or source and detail for failures. Tester runs add a count of pass, fail, error, and skip outcomes. Successful `/health` checks and static UI files aren't logged, and uploaded file names and contents are never logged. The startup line records the deployed commit (`RENDER_GIT_COMMIT`). Search for `"status":5` to find server failures, or `"error_code"` to find rejected uploads.
+
+After each deployment, run `./scripts/smoke-test.sh https://<your-service>`. It checks `/health`, `/formats`, the UI, real DOCX and PDF analysis, and a tester run against the service's own system.
 
 ### Required endpoints
 
@@ -78,6 +80,41 @@ Error responses should use `{"error":{"code":"UNPROCESSABLE_FILE","message":"The
 | 503 | Internal or required external service unavailable |
 
 The client does not set `Content-Type` for multipart uploads; the browser supplies the boundary. It does not silently retry document uploads. Analysis stops waiting after 30 seconds and displays a failure, without showing an old or incomplete report. HTTP 202 is displayed as processing without a completed report. No polling endpoint or job token is specified in Phase 2, so automatic polling is not invented. If the backend supports asynchronous evaluation later, the pod must define how the client retrieves the final report.
+
+## Cross-team testing interface
+
+The course's cross-team testing spec requires each team to deploy a **system** and a **tester**. Both run in this one service, at different base URLs:
+
+| Registry field | Value |
+| --- | --- |
+| System base URL | `https://ece30861-ada.onrender.com` |
+| Tester base URL | `https://ece30861-ada.onrender.com/tester` |
+| Access / run notes | No authentication. Maximum times: system setup 70 s (the free hosting plan can take up to 60 s to wake); tester setup 70 s (including target setup); tester run 15 minutes (13 target calls, each with a 60 s limit, plus coverage retrieval). |
+
+**System** (`testing/system.mjs`):
+- `POST /test/setup` accepts `{"session_id":"…","setup":{}}` and returns 201 with the same ID. It returns 409 for a duplicate ID and 400 for an invalid body.
+- `GET /test/report?session_id=…` returns code coverage (200), or 404 for an unknown session.
+- The project API is stateless, so setup only registers the session. Line coverage isn't instrumented in the deployed service, so `covered` and `total` are `null` and `basis` explains why, as the spec allows.
+
+**Tester** (`testing/tester.mjs`):
+- `POST /tester/test/setup` with `{"target_url":"https://other-team.example/system"}` creates a session (UUID), calls the target's `/test/setup`, and returns 201 when the target is ready. It forwards the target's error status, message, and source.
+- `POST /tester/test/run` with `{"session_id":"…"}` runs tests T-01 to T-13 in order against the target's `/health`, `/formats`, and `/analyze`. It returns one report with a `pass`, `fail`, `error` (with `source`), or `skip` outcome per test, plus code, component, and system coverage.
+- `GET /tester/test/report?session_id=…` returns the stored report, or 409 before the suite ends.
+- A session runs only once. Running it again returns 409.
+
+The suite checks:
+- health and formats
+- missing alt text (HTML and DOCX)
+- contrast at level AA, and its exclusion at level A
+- the no-issue report
+- PDF analysis
+- expected errors: unsupported type (415), empty file (422), corrupt DOCX (422), missing file (400), and invalid `wcag_level` (400)
+
+DOCX and PDF tests are skipped when the target's `/formats` doesn't list that format.
+
+Component and system coverage count the components and acceptance criteria listed in the pod specification. Until the pod lists are added to `testing/pod-spec.json`, both are reported as `null` with an explanation. To fill them in, map each pod item ID to the tests that exercise it, for example `"items": {"AC-01": ["T-03", "T-07"]}`.
+
+Both services are described in `openapi/system.yaml` and `openapi/tester.yaml`. CI validates both files on every push. The smoke test also runs the tester against the service's own system.
 
 ## Interface behavior
 
@@ -161,6 +198,8 @@ npm test
 
 `tests/core.test.mjs` covers URL restrictions, discovered formats, file-type and size boundaries, complete/partial report validation, multipart field preservation, HTTP errors, pending responses, timeout, and cancellation. `tests/engine.test.mjs` covers each engine check, contrast math against WCAG reference values, A/AA filtering, rejection of invalid parser output, and that every engine report passes the frontend's `parseReport()`. `tests/backend.test.mjs` starts the actual local service on an ephemeral loopback port and verifies health, format discovery, CORS, UI serving, successful HTML analysis, WCAG-level filtering, and malformed/unsupported upload responses. `tests/integration.test.mjs` runs end to end through the Python parser. It uploads real DOCX, PDF, and TXT files from `tests/fixtures/documents/` and checks that each report contains the expected findings and passes `parseReport()`. It also covers MIME fallback by file extension, corrupt, encrypted, mismatched, and non-UTF-8 files (422), temp-file deletion, a missing or hung parser (503), oversized and malformed uploads, CORS preflight, and path-traversal attempts.
 
+`tests/test-interface.test.mjs` covers the cross-team testing endpoints. It checks system setup and report (201, 409, 400, 404); a full tester run against this system in which all 13 tests pass and the stored report stays unchanged; forwarding of target setup failures; unreachable targets (source `communication`); and per-test outcomes when a fake target times out, returns 500, sends an invalid report, or doesn't support DOCX or PDF.
+
 Parser tests run separately: `cd accessibility-parser && .venv/bin/python -m pytest -q`. To regenerate the document fixtures, run `accessibility-parser/.venv/bin/python tests/fixtures/documents/make_fixtures.py`. GitHub Actions (`.github/workflows/test.yml`) runs both test suites on every push, then builds the Docker image and runs the smoke test against it.
 
 A deterministic local test service is supplied for UI integration checks:
@@ -195,6 +234,8 @@ PDF analysis is partial: alt text, headings, and tables in tagged PDFs are not r
 - `engine/`: accessibility analysis / WCAG engine (`index.mjs` entry point, `checks.mjs` rules, `contrast.mjs` color math, `cli.mjs`)
 - `server.mjs`: API (upload validation, content-type checks, error mapping), CORS handling, and static UI server
 - `accessibility-parser/`: Prathum's Python document parser; `integration.mjs` is the Node bridge (temp file, timeout, cleanup)
+- `testing/`: cross-team testing interface (`system.mjs`, `tester.mjs` and its suite, `pod-spec.json` for coverage)
+- `openapi/`: OpenAPI 3.1 descriptions of the system and tester
 - `Dockerfile`, `scripts/smoke-test.sh`, `.github/workflows/test.yml`: deployment, post-deploy check, and CI
 - `tests/`: automated tests, synthetic fixtures, and test service
 - `UI_HANDOFF.md`: requirements mapping and engineering handoff

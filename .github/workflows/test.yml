@@ -17,6 +17,8 @@ jobs:
           python-version: '3.12'
       - name: Install parser dependencies
         run: pip install -r accessibility-parser/requirements.txt
+      - name: Validate OpenAPI specifications
+        run: pipx run openapi-spec-validator openapi/system.yaml openapi/tester.yaml
       - name: Parser tests (pytest)
         working-directory: accessibility-parser
         run: python -m pytest -q

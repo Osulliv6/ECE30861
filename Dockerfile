@@ -15,6 +15,9 @@ COPY engine engine
 COPY frontend frontend
 COPY accessibility-parser/integration.mjs accessibility-parser/integration.mjs
 COPY accessibility-parser/parser accessibility-parser/parser
+# The tester service uploads these fixture documents to the target system.
+COPY testing testing
+COPY tests/fixtures/documents tests/fixtures/documents
 
 # HOST=0.0.0.0 accepts outside connections; hosts like Render/Railway/Fly set PORT and terminate HTTPS.
 ENV HOST=0.0.0.0 PORT=8080 PYTHON=/opt/venv/bin/python PYTHONDONTWRITEBYTECODE=1

@@ -1,0 +1,10 @@
+{
+  "components": {
+    "basis": "Components listed in the pod specification. Unavailable: the pod component list has not been added to testing/pod-spec.json yet.",
+    "items": null
+  },
+  "acceptance_criteria": {
+    "basis": "Acceptance criteria listed in the pod specification. Unavailable: the pod acceptance criteria have not been added to testing/pod-spec.json yet.",
+    "items": null
+  }
+}
