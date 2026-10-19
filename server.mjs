@@ -16,7 +16,7 @@ function sendJson(res, status, body, headers = {}) {
   res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff', ...headers});
   res.end(JSON.stringify(body));
 }
-function failure(res, status, code, message) { res.logFields = {...res.logFields, error_code:code}; sendJson(res, status, {error:{code,message}}); }
+function failure(res, status, code, message) { res.logFields = {...res.logFields, error_code:code}; sendJson(res, status, {code,message}); }
 const utf8 = bytes => { try { return new TextDecoder('utf-8',{fatal:true}).decode(bytes); } catch { return null; } };
 // Each supported type: the extension the parser expects and a check that the bytes really are that format.
 // Browser MIME types are only hints, so the content check is authoritative.
@@ -30,7 +30,7 @@ const EXTENSION_TYPES = {'.html':'text/html','.htm':'text/html','.pdf':'applicat
 export const SUPPORTED_MIME_TYPES = Object.keys(FORMATS);
 function uploadType(file) { return FORMATS[file.contentType] ? file.contentType : EXTENSION_TYPES[extname(file.filename || '').toLowerCase()]; }
 
-function readBody(req, maxBytes) { return new Promise((resolveBody,reject) => { let size = 0; const chunks = []; req.on('data',chunk => { size += chunk.length; if (size > maxBytes) { reject(Object.assign(new Error('too large'),{code:'FILE_TOO_LARGE'})); req.destroy(); return; } chunks.push(chunk); }); req.on('end',()=>resolveBody(Buffer.concat(chunks))); req.on('error',reject); }); }
+function readBody(req, maxBytes) { return new Promise((resolveBody,reject) => { let size = 0, settled = false; const chunks = []; req.on('data',chunk => { if (settled) return; size += chunk.length; if (size > maxBytes) { settled = true; chunks.length = 0; reject(Object.assign(new Error('too large'),{code:'FILE_TOO_LARGE'})); req.resume(); return; } chunks.push(chunk); }); req.on('end',()=>{ if (!settled) resolveBody(Buffer.concat(chunks)); }); req.on('error',error=>{ if (!settled) reject(error); }); }); }
 function parseMultipart(body, contentType) {
   const found = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType), boundary = found?.[1] || found?.[2]; if (!boundary) throw new Error('Missing multipart boundary.');
   const marker = Buffer.from(`--${boundary}`), parts = []; let cursor = body.indexOf(marker);

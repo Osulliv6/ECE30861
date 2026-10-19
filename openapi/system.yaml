@@ -155,21 +155,18 @@ components:
       properties:
         message: {type: string, minLength: 1}
         source: {type: string, enum: [tester, system, communication, unknown]}
+    ProjectErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string, minLength: 1}
   responses:
     ProjectError:
       description: Project API error
       content:
         application/json:
-          schema:
-            type: object
-            required: [error]
-            properties:
-              error:
-                type: object
-                required: [code, message]
-                properties:
-                  code: {type: string}
-                  message: {type: string, minLength: 1}
+          schema: {$ref: '#/components/schemas/ProjectErrorBody'}
     TestError:
       description: Testing interface error
       content:

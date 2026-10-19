@@ -35,12 +35,12 @@ test('HTML upload becomes a complete WCAG report and honors the requested level'
 });
 
 test('upload boundary errors are stable JSON and never return a report', async () => {
-  const missing = await fetch(`${base}/analyze`, {method:'POST', body:new FormData()}); assert.equal(missing.status,400); assert.equal((await missing.json()).error.code,'MISSING_FILE');
+  const missing = await fetch(`${base}/analyze`, {method:'POST', body:new FormData()}); assert.equal(missing.status,400); assert.equal((await missing.json()).code,'MISSING_FILE');
   for (const [content, options, status, code] of [
     ['', {}, 422, 'UNPROCESSABLE_FILE'],
     ['plain text', {}, 422, 'UNPROCESSABLE_FILE'],
     ['PK', {type:'application/zip',name:'slides.zip'}, 415, 'UNSUPPORTED_MEDIA_TYPE'],
     ['<html></html>', {type:'application/pdf',name:'paper.pdf'}, 422, 'UNPROCESSABLE_FILE'],
     ['<!doctype html><html></html>', {level:'AAA'}, 400, 'INVALID_WCAG_LEVEL'],
-  ]) { const response = await upload(content,options); assert.equal(response.status,status); const body = await response.json(); assert.equal(body.error.code,code); assert.equal(body.issues,undefined); }
+  ]) { const response = await upload(content,options); assert.equal(response.status,status); const body = await response.json(); assert.equal(body.code,code); assert.equal(body.issues,undefined); }
 });

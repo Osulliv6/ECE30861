@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { createServer } from '../server.mjs';
 import { parseReport } from '../frontend/core.js';
 
@@ -79,7 +80,7 @@ test('corrupt, encrypted, mismatched, and non-UTF-8 documents return 422 without
     const response = await upload(base, content, options);
     assert.equal(response.status, 422, options.name);
     const body = await response.json();
-    assert.equal(body.error.code, 'UNPROCESSABLE_FILE');
+    assert.equal(body.code, 'UNPROCESSABLE_FILE');
     assert.equal(body.issues, undefined);
   }
 });
@@ -94,7 +95,7 @@ test('a missing or hung parser returns 503 instead of crashing or hanging', asyn
   const missing = await start({parserOptions:{python:'/nonexistent/python3', tmpRoot}});
   let response = await upload(missing, await fixture('notes.txt'), {type:'text/plain', name:'notes.txt'});
   assert.equal(response.status, 503);
-  assert.equal((await response.json()).error.code, 'PROCESSING_UNAVAILABLE');
+  assert.equal((await response.json()).code, 'PROCESSING_UNAVAILABLE');
 
   const hang = join(scratch, 'hang.sh');
   await writeFile(hang, '#!/bin/sh\nsleep 5\n');
@@ -102,17 +103,21 @@ test('a missing or hung parser returns 503 instead of crashing or hanging', asyn
   const slow = await start({parserOptions:{python:hang, timeoutMs:200, tmpRoot}});
   response = await upload(slow, await fixture('notes.txt'), {type:'text/plain', name:'notes.txt'});
   assert.equal(response.status, 503);
-  assert.equal((await response.json()).error.code, 'PROCESSING_TIMEOUT');
+  assert.equal((await response.json()).code, 'PROCESSING_TIMEOUT');
   assert.deepEqual(await readdir(tmpRoot), []);
 });
 
 test('oversized and malformed uploads are rejected with stable JSON errors', async () => {
   const big = await upload(base, Buffer.alloc(10_000_001, 0x61), {type:'text/plain', name:'big.txt'});
   assert.equal(big.status, 413);
-  assert.equal((await big.json()).error.code, 'FILE_TOO_LARGE');
+  assert.equal((await big.json()).code, 'FILE_TOO_LARGE');
+  const chunked = Readable.toWeb(Readable.from([Buffer.alloc(10_020_000, 0x61)]));
+  const streamed = await fetch(`${base}/analyze`, {method:'POST', headers:{'Content-Type':'multipart/form-data; boundary=oversized'}, body:chunked, duplex:'half'});
+  assert.equal(streamed.status, 413);
+  assert.equal((await streamed.json()).code, 'FILE_TOO_LARGE');
   const noBoundary = await fetch(`${base}/analyze`, {method:'POST', headers:{'Content-Type':'multipart/form-data'}, body:'x'});
   assert.equal(noBoundary.status, 400);
-  assert.equal((await noBoundary.json()).error.code, 'MALFORMED_REQUEST');
+  assert.equal((await noBoundary.json()).code, 'MALFORMED_REQUEST');
   const notMultipart = await fetch(`${base}/analyze`, {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
   assert.equal(notMultipart.status, 400);
 });
@@ -129,6 +134,6 @@ test('static serving cannot escape the frontend folder and unknown paths return 
   for (const path of ['/%2e%2e/server.mjs', '/..%2fpackage.json', '/%E0%A4%A', '/no-such-page']) {
     const response = await fetch(`${base}${path}`);
     assert.equal(response.status, 404, path);
-    assert.equal((await response.json()).error.code, 'NOT_FOUND');
+    assert.equal((await response.json()).code, 'NOT_FOUND');
   }
 });

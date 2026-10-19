@@ -37,7 +37,7 @@ Supported formats are HTML, PDF, DOCX, and plain text, up to 10 MB.
 | 422 | `UNPROCESSABLE_FILE` | Empty, corrupt, or mismatched file |
 | 503 | `PROCESSING_UNAVAILABLE`, `PROCESSING_TIMEOUT` | Parser unavailable or timed out |
 
-Project API errors are nested: `{"error":{"code":"...","message":"..."}}`. This differs from the flat `{"code":"...","message":"..."}` example in the Phase 2 contract (Section 5.2); see [Known limitations](#known-limitations). Test endpoint errors use `{"message":"...","source":"system"}`, as the cross-team spec requires: 400 for invalid requests, 404 for unknown sessions, and 409 for a duplicate session ID.
+Project API errors use the Phase 2 contract shape `{"code":"...","message":"..."}`. Test endpoint errors use `{"message":"...","source":"system"}`, as the cross-team spec requires: 400 for invalid requests, 404 for unknown sessions, and 409 for a duplicate session ID.
 
 ### Quick checks with curl
 
@@ -133,9 +133,9 @@ An example **complete** successful response:
 
 Each issue requires `wcag_criterion`, `location`, `severity`, `description`, and `suggested_fix`. Location may be `null` or an object containing one or more of `selector`, `line`, `page`, and `snippet`. Line and page values are positive integers. Severity is `critical`, `serious`, `moderate`, or `minor`. A no-issue result is `{"issues":[],"message":"No supported violations were detected. This does not certify full ADA or WCAG compliance."}`. Empty-issue reports must include a nonempty message. The UI displays its own explicit no-issue statement and scope limitation; the backend must also return the required statement and limitation.
 
-The DOCX's Section 5.2 supplies the more precise severity and location fields; it notes these need pod confirmation. Keep `parseReport()` in `frontend/core.js` aligned if the pod adopts different fields. This phase supports `text/html` only; `/formats` is the authoritative discovery endpoint. The service rejects empty, malformed, non-UTF-8, and non-document HTML, does not trust browser filenames, and enforces a 10 MB decimal limit. PDF and Word support are intentionally deferred until a parser is added and tested.
+The DOCX's Section 5.2 supplies the more precise severity and location fields; it notes these need pod confirmation. Keep `parseReport()` in `frontend/core.js` aligned if the pod adopts different fields. `/formats` is authoritative for discovery: this implementation supports HTML, PDF, DOCX, and plain text. The service rejects empty, malformed, non-UTF-8, and mismatched files, does not trust browser filenames, and enforces a 10 MB decimal limit.
 
-Error responses should use `{"error":{"code":"UNPROCESSABLE_FILE","message":"The file could not be evaluated."}}`. The frontend also accepts a top-level `{code,message}` error on a non-success HTTP status, accommodating the example in the supplied documents.
+Error responses use `{"code":"UNPROCESSABLE_FILE","message":"The file could not be evaluated."}`.
 
 | HTTP status | Meaning |
 | --- | --- |
@@ -258,7 +258,7 @@ The `elements` array is in reading order. Only `type` is required; the engine us
 
 ## Known limitations
 
-- **Error format deviation:** `/analyze` errors are nested (`{"error":{"code","message"}}`), while the Phase 2 contract example is flat (`{"code","message"}`). The codes `MALFORMED_REQUEST` and `PROCESSING_TIMEOUT` are also not listed in the contract. Fixing this needs pod agreement.
+- **Error-code detail:** Error bodies follow the Phase 2 `{code,message}` shape. The implementation also uses specific codes for malformed requests and parser timeouts; the pod should keep the code list aligned as the shared OpenAPI contract is refined.
 - **Coverage:** code coverage is reported as `null`, because line instrumentation isn't enabled in the deployed service. Component and system coverage are `null` until the pod's component and acceptance-criteria lists are added to `testing/pod-spec.json`.
 - **PDF analysis is partial:** alt text, headings, and tables in tagged PDFs aren't read, so those checks are skipped for PDFs instead of guessed. Scanned PDFs (images of text) aren't analyzed.
 - **Contrast:** only inline or run-level text and background colors are checked. External CSS and rendered backgrounds aren't evaluated, and missing backgrounds are assumed white.
