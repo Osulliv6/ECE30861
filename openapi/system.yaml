@@ -38,7 +38,7 @@ paths:
                     type: array
                     minItems: 1
                     items: {type: string}
-                  max_file_size_mb: {type: number, minimum: 10}
+                  max_file_size_mb: {type: number, minimum: 10, description: 'Binary MiB units (1 MiB = 1,048,576 bytes).'}
   /analyze:
     post:
       summary: Analyze one document for WCAG 2.1 issues

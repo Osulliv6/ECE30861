@@ -30,7 +30,7 @@ export function acceptedTypes(formats) { return [...new Set(formats.supported_mi
 export function validateFile(file, formats) {
   if (!file) throw new ApiError('Choose a file before starting a check.', 'MISSING_FILE');
   if (!file.size) throw new ApiError('This file is empty. Choose a document with content.', 'UNPROCESSABLE_FILE', 422);
-  if (file.size > formats.max_file_size_mb * 1_000_000) throw new ApiError(`This file exceeds the ${formats.max_file_size_mb} MB limit. Choose a smaller document.`, 'FILE_TOO_LARGE', 413);
+  if (file.size > formats.max_file_size_mb * 1024 * 1024) throw new ApiError(`This file exceeds the ${formats.max_file_size_mb} MB limit. Choose a smaller document.`, 'FILE_TOO_LARGE', 413);
   const extension = '.' + file.name.split('.').pop().toLowerCase();
   // Browsers can omit or misidentify MIME types. An advertised extension is a hint;
   // the backend remains responsible for content-based validation and corruption.

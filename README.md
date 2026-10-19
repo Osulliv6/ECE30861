@@ -25,7 +25,7 @@ Notes:
 | `POST https://ece30861-ada.onrender.com/test/setup` | Register a test session | JSON `{"session_id":"<unique id>","setup":{}}` | `201 {"session_id":"<same id>"}` |
 | `GET https://ece30861-ada.onrender.com/test/report?session_id=<id>` | Code coverage for a session | none | `200 {"session_id":"<id>","coverage":{"code":{"covered":null,"total":null,"basis":"..."}}}` |
 
-Supported formats are HTML, PDF, DOCX, and plain text, up to 10 MB.
+Supported formats are HTML, PDF, DOCX, and plain text, up to 10 MiB (10 × 1,048,576 bytes). The API field remains named `max_file_size_mb` for the shared interface.
 
 `/analyze` errors:
 
@@ -133,7 +133,7 @@ An example **complete** successful response:
 
 Each issue requires `wcag_criterion`, `location`, `severity`, `description`, and `suggested_fix`. Location may be `null` or an object containing one or more of `selector`, `line`, `page`, and `snippet`. Line and page values are positive integers. Severity is `critical`, `serious`, `moderate`, or `minor`. A no-issue result is `{"issues":[],"message":"No supported violations were detected. This does not certify full ADA or WCAG compliance."}`. Empty-issue reports must include a nonempty message. The UI displays its own explicit no-issue statement and scope limitation; the backend must also return the required statement and limitation.
 
-The DOCX's Section 5.2 supplies the more precise severity and location fields; it notes these need pod confirmation. Keep `parseReport()` in `frontend/core.js` aligned if the pod adopts different fields. `/formats` is authoritative for discovery: this implementation supports HTML, PDF, DOCX, and plain text. The service rejects empty, malformed, non-UTF-8, and mismatched files, does not trust browser filenames, and enforces a 10 MB decimal limit.
+The DOCX's Section 5.2 supplies the more precise severity and location fields; it notes these need pod confirmation. Keep `parseReport()` in `frontend/core.js` aligned if the pod adopts different fields. `/formats` is authoritative for discovery: this implementation supports HTML, PDF, DOCX, and plain text. The service rejects empty, malformed, non-UTF-8, and mismatched files, does not trust browser filenames, and enforces 10 MiB (10 × 1,048,576 bytes). The Phase 2 phrase “10 MB” does not define decimal versus binary units; this implementation follows the peer tester's 10 MiB interpretation pending pod confirmation.
 
 Error responses use `{"code":"UNPROCESSABLE_FILE","message":"The file could not be evaluated."}`.
 
@@ -185,7 +185,7 @@ Both services are described in `openapi/system.yaml` and `openapi/tester.yaml`. 
 ## Interface behavior
 
 - Browse for one file or drag and drop it; inspect its name and size, or remove it.
-- Reject empty, oversized, and unsupported selections before upload. Size uses decimal megabytes (`1 MB = 1,000,000 bytes`); align the backend if the pod chooses another convention.
+- Reject empty, oversized, and unsupported selections before upload. The limit uses binary megabytes (`1 MB = 1,048,576 bytes`); confirm this interpretation with the pod because Phase 2 does not define the unit convention.
 - Choose WCAG 2.1 A or AA, with AA selected initially.
 - Show a waiting indicator and elapsed seconds. Cancel the browser request without claiming that server-side processing has stopped.
 - Display complete findings with criterion, severity, available location, description, and suggested fix. Filter by severity.

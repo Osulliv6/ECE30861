@@ -108,10 +108,12 @@ test('a missing or hung parser returns 503 instead of crashing or hanging', asyn
 });
 
 test('oversized and malformed uploads are rejected with stable JSON errors', async () => {
-  const big = await upload(base, Buffer.alloc(10_000_001, 0x61), {type:'text/plain', name:'big.txt'});
+  const atLimit = await upload(base, Buffer.alloc(10*1024*1024, 0x61), {type:'text/plain', name:'at-limit.txt'});
+  assert.equal(atLimit.status, 200);
+  const big = await upload(base, Buffer.alloc(10*1024*1024+1, 0x61), {type:'text/plain', name:'big.txt'});
   assert.equal(big.status, 413);
   assert.equal((await big.json()).code, 'FILE_TOO_LARGE');
-  const chunked = Readable.toWeb(Readable.from([Buffer.alloc(10_020_000, 0x61)]));
+  const chunked = Readable.toWeb(Readable.from([Buffer.alloc(10*1024*1024+16_385, 0x61)]));
   const streamed = await fetch(`${base}/analyze`, {method:'POST', headers:{'Content-Type':'multipart/form-data; boundary=oversized'}, body:chunked, duplex:'half'});
   assert.equal(streamed.status, 413);
   assert.equal((await streamed.json()).code, 'FILE_TOO_LARGE');

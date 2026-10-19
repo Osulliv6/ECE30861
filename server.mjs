@@ -9,7 +9,8 @@ import { createTesterInterface } from './testing/tester.mjs';
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(moduleDir, 'frontend');
-export const MAX_FILE_SIZE_BYTES = 10_000_000;
+// Cross-team tester treats 10 MB as 10 MiB (10 * 1,048,576 bytes).
+export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const mime = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json'};
 
 function sendJson(res, status, body, headers = {}) {

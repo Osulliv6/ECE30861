@@ -12,9 +12,9 @@ test('format discovery requires usable MIME data and a numeric limit',()=>{
   assert.deepEqual(parseFormats(formats),formats);
   for(const bad of [{},{supported_mime_types:[],max_file_size_mb:10},{supported_mime_types:['.pdf'],max_file_size_mb:10},{...formats,max_file_size_mb:'10'},{...formats,max_file_size_mb:9.99}])assert.throws(()=>parseFormats(bad),ApiError);
 });
-test('uploads use discovered types, decimal MB boundary and browser MIME fallback',()=>{
-  assert.doesNotThrow(()=>validateFile({name:'paper.pdf',type:'',size:10_000_000},formats));
-  for(const [file,code] of [[null,'MISSING_FILE'],[{name:'paper.pdf',size:0},'UNPROCESSABLE_FILE'],[{name:'paper.pdf',size:10_000_001},'FILE_TOO_LARGE'],[{name:'notes.exe',size:2,type:'application/octet-stream'},'UNSUPPORTED_MEDIA_TYPE']])assert.throws(()=>validateFile(file,formats),e=>e.code===code);
+test('uploads use discovered types, binary MB boundary and browser MIME fallback',()=>{
+  assert.doesNotThrow(()=>validateFile({name:'paper.pdf',type:'',size:10*1024*1024},formats));
+  for(const [file,code] of [[null,'MISSING_FILE'],[{name:'paper.pdf',size:0},'UNPROCESSABLE_FILE'],[{name:'paper.pdf',size:10*1024*1024+1},'FILE_TOO_LARGE'],[{name:'notes.exe',size:2,type:'application/octet-stream'},'UNSUPPORTED_MEDIA_TYPE']])assert.throws(()=>validateFile(file,formats),e=>e.code===code);
 });
 test('complete findings and no-issue reports are accepted; partial reports are never successful',()=>{
   assert.equal(parseReport(sampleIssues).issues.length,3);assert.equal(parseReport(sampleClean).issues.length,0);
