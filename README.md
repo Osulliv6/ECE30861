@@ -2,6 +2,72 @@
 
 This is a runnable Phase 3 system: choose an HTML, PDF, DOCX, or plain-text document, submit it for accessibility analysis, and display the findings. The Node server validates the upload (size, type, and that the content really is that format), passes it to Prathum's Python parser (`accessibility-parser/`), runs the WCAG engine (`engine/`) on the parsed structure, and returns the shared JSON report. Each upload is written to a private temporary directory only for the parser run and is deleted afterwards, whether parsing succeeds or fails.
 
+## Testing our deployed service (for podmates)
+
+| What | URL |
+| --- | --- |
+| **System base URL** (use this as `target_url`) | `https://ece30861-ada.onrender.com` |
+| **Tester base URL** (our automated test runner) | `https://ece30861-ada.onrender.com/tester` |
+| Web UI | https://ece30861-ada.onrender.com |
+
+Notes:
+- No authentication.
+- The project API is stateless, so project requests don't carry a session ID.
+- The service is on a free hosting plan that sleeps after about 15 minutes idle. The first request after that can take up to 60 seconds. Allow at least 70 seconds for setup.
+
+### System endpoints
+
+| Method and URL | Purpose | Request | Success response |
+| --- | --- | --- | --- |
+| `GET https://ece30861-ada.onrender.com/health` | Health check | none | `200 {"status":"ok"}` |
+| `GET https://ece30861-ada.onrender.com/formats` | Supported formats and size limit | none | `200 {"supported_mime_types":[...],"max_file_size_mb":10}` |
+| `POST https://ece30861-ada.onrender.com/analyze` | Analyze one document | `multipart/form-data`: `file` (required), `wcag_level` = `A` or `AA` (optional, default `AA`) | `200 {"issues":[...]}` (plus a `message` when `issues` is empty) |
+| `POST https://ece30861-ada.onrender.com/test/setup` | Register a test session | JSON `{"session_id":"<unique id>","setup":{}}` | `201 {"session_id":"<same id>"}` |
+| `GET https://ece30861-ada.onrender.com/test/report?session_id=<id>` | Code coverage for a session | none | `200 {"session_id":"<id>","coverage":{"code":{"covered":null,"total":null,"basis":"..."}}}` |
+
+Supported formats are HTML, PDF, DOCX, and plain text, up to 10 MB.
+
+`/analyze` errors:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 400 | `MISSING_FILE`, `INVALID_WCAG_LEVEL`, `MALFORMED_REQUEST` | Missing file, `wcag_level` other than `A`/`AA`, or an unreadable request |
+| 413 | `FILE_TOO_LARGE` | File over 10 MB |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | Unsupported file type |
+| 422 | `UNPROCESSABLE_FILE` | Empty, corrupt, or mismatched file |
+| 503 | `PROCESSING_UNAVAILABLE`, `PROCESSING_TIMEOUT` | Parser unavailable or timed out |
+
+Project API errors are nested: `{"error":{"code":"...","message":"..."}}`. This differs from the flat `{"code":"...","message":"..."}` example in the Phase 2 contract (Section 5.2); see [Known limitations](#known-limitations). Test endpoint errors use `{"message":"...","source":"system"}`, as the cross-team spec requires: 400 for invalid requests, 404 for unknown sessions, and 409 for a duplicate session ID.
+
+### Quick checks with curl
+
+```sh
+curl https://ece30861-ada.onrender.com/health
+curl https://ece30861-ada.onrender.com/formats
+curl -F "file=@sample.html;type=text/html" -F wcag_level=AA https://ece30861-ada.onrender.com/analyze
+curl -X POST -H "Content-Type: application/json" -d '{"session_id":"my-unique-id","setup":{}}' https://ece30861-ada.onrender.com/test/setup
+curl "https://ece30861-ada.onrender.com/test/report?session_id=my-unique-id"
+```
+
+### Run your tester against our system
+
+Call your own tester's setup with our system base URL as the target, then run it:
+
+```sh
+curl -X POST -H "Content-Type: application/json" -d '{"target_url":"https://ece30861-ada.onrender.com"}' https://<your-tester-base-url>/test/setup
+curl -X POST -H "Content-Type: application/json" -d '{"session_id":"<id from setup>"}' https://<your-tester-base-url>/test/run
+```
+
+### Run our tester against your system
+
+```sh
+curl -X POST -H "Content-Type: application/json" -d '{"target_url":"https://<your-system-base-url>"}' https://ece30861-ada.onrender.com/tester/test/setup
+curl -X POST -H "Content-Type: application/json" -d '{"session_id":"<id from setup>"}' https://ece30861-ada.onrender.com/tester/test/run
+curl "https://ece30861-ada.onrender.com/tester/test/report?session_id=<id from setup>"
+```
+
+Our tester runs 13 tests (T-01 to T-13) against your `/health`, `/formats`, and `/analyze`, and returns one report with a pass, fail, error, or skip outcome per test, plus coverage. DOCX and PDF tests are skipped if your `/formats` doesn't list those formats. A run takes under a minute against an awake service. The full test list is in `testing/tester.mjs`, and the test documents are in `tests/fixtures/documents/`. OpenAPI descriptions are in `openapi/system.yaml` and `openapi/tester.yaml`. Implementation details are in [Cross-team testing interface](#cross-team-testing-interface).
+
 ## Run locally
 
 Requires Node.js 18 or newer (no npm dependencies) and Python 3.10 or newer for the parser. Create the parser's virtual environment once:
@@ -189,6 +255,17 @@ The `elements` array is in reading order. Only `type` is required; the engine us
 | `font_size_pt`, `bold` | Used to decide whether text is large for contrast purposes |
 | `table.layout` | `true` excludes layout-only tables from the header check |
 | `location` | Optional `{page, line, selector}`; invalid values are dropped. The engine adds a `snippet` from the element text |
+
+## Known limitations
+
+- **Error format deviation:** `/analyze` errors are nested (`{"error":{"code","message"}}`), while the Phase 2 contract example is flat (`{"code","message"}`). The codes `MALFORMED_REQUEST` and `PROCESSING_TIMEOUT` are also not listed in the contract. Fixing this needs pod agreement.
+- **Coverage:** code coverage is reported as `null`, because line instrumentation isn't enabled in the deployed service. Component and system coverage are `null` until the pod's component and acceptance-criteria lists are added to `testing/pod-spec.json`.
+- **PDF analysis is partial:** alt text, headings, and tables in tagged PDFs aren't read, so those checks are skipped for PDFs instead of guessed. Scanned PDFs (images of text) aren't analyzed.
+- **Contrast:** only inline or run-level text and background colors are checked. External CSS and rendered backgrounds aren't evaluated, and missing backgrounds are assumed white.
+- **Locations:** DOCX locations are body element positions, not page numbers. HTML `line` values are element order, not source lines.
+- **Remediation guidance** is fixed text for each check. No AI-generated suggestions are included yet.
+- **Availability:** the free hosting plan sleeps after about 15 minutes idle, and the first request after that can take up to 60 seconds. Test sessions are kept in memory, so a restart or redeploy clears them.
+- **The tester assumes our interpretation of the shared API**, for example contrast checks at level AA, a 415 error for unsupported types, and a 422 error for empty files. A podmate's system may differ where the pod specification is unclear.
 
 ## Verification
 
