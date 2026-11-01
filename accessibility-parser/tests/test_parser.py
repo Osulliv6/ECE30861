@@ -32,6 +32,16 @@ def test_html_structure(tmp_path):
     assert any(e['type']=='link' and e['text']=='click here' for e in data['elements'])
     assert any(e['type']=='text' and e.get('color')=='#999999' for e in data['elements'])
 
+def test_html_inherits_inline_text_color_and_respects_nearest_override(tmp_path):
+    p = tmp_path/'inherited.html'
+    p.write_text('''<!doctype html><html lang="en"><head><title>Test</title></head>
+    <body style="color: #aaaaaa"><p>Inherited color</p>
+    <div style="color: #111111"><p>Nearest ancestor</p>
+    <p style="color: #222222">Local override</p></div></body></html>''')
+    elements = parse_document(p)['elements']
+    colors = {e['text']: e.get('color') for e in elements if e['type'] == 'text'}
+    assert colors == {'Inherited color': '#aaaaaa', 'Nearest ancestor': '#111111', 'Local override': '#222222'}
+
 def test_pdf(tmp_path):
     import pymupdf as fitz
     path=tmp_path/'page.pdf'; doc=fitz.open(); page=doc.new_page()

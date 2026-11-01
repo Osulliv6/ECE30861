@@ -147,6 +147,16 @@ def _html(path):
                     sz=re.match(r'([\d.]+)(pt|px)', val)
                     if sz: styles[field]=round(float(sz.group(1))*(.75 if sz.group(2)=='px' else 1),2)
                 else: styles[field]=val
+        # CSS color is inherited. Follow inline declarations on ancestors when
+        # this element does not specify one; stylesheets are not evaluated.
+        if 'color' not in styles:
+            for parent in tag.parents:
+                if not isinstance(parent, Tag): continue
+                parent_css = parent.get('style', '')
+                color = re.search(r'(?:^|;)\s*color\s*:\s*([^;]+)', parent_css, re.I)
+                if color:
+                    styles['color'] = color.group(1).strip()
+                    break
         if tag.name in ['b','strong'] or re.search(r'font-weight\s*:\s*(bold|[7-9]00)',css,re.I): styles['bold']=True
         return styles
     def walk(tag):

@@ -40,6 +40,18 @@ test.after(async () => {
   await rm(scratch, {recursive:true, force:true});
 });
 
+test('HTML inherited inline color produces AA contrast findings and respects overrides', async () => {
+  const html = '<!doctype html><html lang="en"><head><title>Test</title></head><body style="color:#aaaaaa"><p>Low contrast</p><p style="color:#000000">Readable</p></body></html>';
+  const response = await upload(base, html, {type:'text/html', name:'contrast.html'});
+  assert.equal(response.status, 200);
+  const report = await response.json();
+  const contrast = report.issues.filter(issue => issue.wcag_criterion === '1.4.3');
+  assert.equal(contrast.length, 1);
+  assert.match(contrast[0].location.snippet, /Low contrast/);
+  const levelA = await upload(base, html, {type:'text/html', name:'contrast.html', level:'A'});
+  assert.ok(!criteria(await levelA.json()).includes('1.4.3'));
+});
+
 test('DOCX upload produces findings for missing alt text, skipped heading, link text, and table headers', async () => {
   const response = await upload(base, await fixture('course.docx'), {type:DOCX, name:'course.docx'});
   assert.equal(response.status, 200);

@@ -298,7 +298,7 @@ Connect the preview to `http://127.0.0.1:3087`. **This is a test double, not an 
 | `empty.html` | Client rejects zero bytes |
 | `unsupported.exe` | Client rejects unsupported type |
 
-PDF analysis is partial: alt text, headings, and tables in tagged PDFs are not read, so those checks are skipped for PDFs instead of guessed. Contrast checks use only inline or run-level colors, not external CSS or rendered backgrounds. The UI itself has not been certified for WCAG conformance; keyboard support and visual checks are implementation evidence, not a full assistive-technology audit.
+PDF analysis is partial: alt text, headings, and tables in tagged PDFs are not read, so those checks are skipped for PDFs instead of guessed. For HTML contrast checks, inline foreground colors can be inherited from ancestor elements; external stylesheets, computed styles, and rendered backgrounds are not evaluated. Other contrast checks use available inline or run-level colors. The UI itself has not been certified for WCAG conformance; keyboard support and visual checks are implementation evidence, not a full assistive-technology audit.
 
 ## Files
 
