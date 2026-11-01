@@ -108,6 +108,8 @@ export function createServer({allowedOrigins = (process.env.CORS_ORIGINS || 'htt
     setCors(req,res,allowedOrigins);
     if (req.method === 'OPTIONS') { res.writeHead(204,{'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Access-Control-Max-Age':'600'}); return res.end(); }
     const url = new URL(req.url,'http://localhost'), path = url.pathname;
+    // The tester base URL itself describes the tester endpoints, so the registry link is useful in a browser.
+    if (req.method === 'GET' && (path === '/tester' || path === '/tester/')) return sendJson(res,200,{service:'ECE 30861 Team 20 tester (course testing interface)',endpoints:['POST /test/setup','POST /test/run','GET /test/report']});
     const route = TEST_ROUTES[path];
     if (route) {
       if (req.method !== route.method) return sendJson(res,405,{message:`Use ${route.method} for ${path}.`,source:route.source},{Allow:route.method});

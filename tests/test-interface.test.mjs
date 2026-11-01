@@ -117,6 +117,12 @@ test('tester records system errors, failed expectations, timeouts, and unsupport
   assert.equal(r2.results.find(x => x.test_id === 'T-01').outcome, 'fail');
 });
 
+test('the tester base URL describes the tester endpoints', async () => {
+  const r = await fetch(`${base}/tester`);
+  assert.equal(r.status, 200);
+  assert.deepEqual((await r.json()).endpoints, ['POST /test/setup', 'POST /test/run', 'GET /test/report']);
+});
+
 test('tester run and report reject unknown or missing sessions', async () => {
   assert.equal((await post(`${base}/tester/test/run`, {session_id:'unknown'})).status, 404);
   assert.equal((await post(`${base}/tester/test/run`, {})).status, 400);
