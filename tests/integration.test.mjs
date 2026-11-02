@@ -62,6 +62,14 @@ test('DOCX upload produces findings for missing alt text, skipped heading, link 
   assert.equal(report.issues[1].location.snippet, 'Picture 1');
 });
 
+test('HTML contrast checks nested spans using their own styles', async () => {
+  const html = '<!doctype html><html lang="en"><head><title>Test</title></head><body><p style="color:#000">Readable <span style="color:#aaa">Faint text</span> readable again</p></body></html>';
+  const response = await upload(base, html, {type:'text/html', name:'mixed.html'});
+  assert.equal(response.status, 200);
+  const report = await response.json();
+  assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location.snippet]), [['1.4.3', 'Faint text']]);
+});
+
 test('untagged PDF gets one "not tagged" finding instead of guessed headings or alt text', async () => {
   const report = await (await upload(base, await fixture('course.pdf'), {type:'application/pdf', name:'course.pdf'})).json();
   assert.equal(parseReport(report), report);
