@@ -120,10 +120,49 @@ def _docx(path):
                             _add(elements,{'type':'link','text':link_text,'href':href,'location':location})
                         for img in _docx_images(p):
                             img['location']=location; _add(elements,img)
+    # Extract content from DOCX headers/footers. Word stores these in separate
+    # document parts, so walking doc.element.body never reaches them.
+    # Use a monotonically increasing position for engine-compatible locations;
+    # part and section details are additional provenance fields.
+    seen_parts = set()
+    position = len(list(doc.element.body.iterchildren()))
+    for section_number, section in enumerate(doc.sections, 1):
+        for kind in ('header', 'first_page_header', 'even_page_header',
+                     'footer', 'first_page_footer', 'even_page_footer'):
+            story = getattr(section, kind)
+            if story.is_linked_to_previous and section_number > 1:
+                continue
+            part_name = str(story.part.partname)
+            if part_name in seen_parts:
+                continue
+            seen_parts.add(part_name)
+            for child in story._element.iterchildren():
+                position += 1
+                location = {'line':position, 'section':section_number, 'part':kind}
+                if child.tag == qn('w:p'):
+                    _docx_paragraph(Paragraph(child, story), elements, location)
+                elif child.tag == qn('w:tbl'):
+                    table = Table(child, story)
+                    if not table.rows:
+                        continue
+                    marked_header = any(row._tr.trPr is not None and row._tr.trPr.find(qn('w:tblHeader')) is not None for row in table.rows)
+                    _add(elements, {'type':'table', 'rows':len(table.rows),
+                                    'has_header_row':bool(marked_header), 'has_header_column':False,
+                                    'layout':False, 'location':location})
+                    for row in table.rows:
+                        for cell in row.cells:
+                            for para in cell.paragraphs:
+                                for label, target in _docx_links(para):
+                                    _add(elements, {'type':'link', 'text':label,
+                                                    'href':target, 'location':location})
+                                for img in _docx_images(para):
+                                    img['location'] = location
+                                    _add(elements, img)
     return {'metadata':metadata,'elements':elements,
             'parser_info':{'format':'docx','reading_order':'document body order (approximate for floating objects)',
                            'limitations':['DOCX has no stable page numbers without rendering',
-                                          'Only explicitly marked Word heading styles and header rows are authoritative']}}
+                                          'Only explicitly marked Word heading styles and header rows are authoritative',
+                                          'Header/footer extraction is by section, not visual page order']}}
 
 def _html(path):
     from bs4 import BeautifulSoup, NavigableString, Tag
