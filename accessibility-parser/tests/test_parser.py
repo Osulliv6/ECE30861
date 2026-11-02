@@ -99,3 +99,29 @@ def test_cli_stdout_is_only_json():
     for name in ['course.pdf','corrupt.docx']:
         out=subprocess.run([sys.executable,'-m','parser.cli',str(FIXTURES/name)],cwd=root,capture_output=True,text=True).stdout
         json.loads(out)  # A library warning on stdout would make this fail.
+
+
+def test_docx_header_footer_content(tmp_path):
+    doc = Document()
+    doc.add_paragraph('Body text')
+    section = doc.sections[0]
+    section.header.paragraphs[0].text = 'Header text'
+    section.footer.paragraphs[0].text = 'Footer text'
+    path = tmp_path / 'header-footer.docx'
+    doc.save(path)
+    parsed = parse_document(path)
+    texts = [e for e in parsed['elements'] if e['type'] == 'text']
+    assert any(e['text'] == 'Body text' for e in texts)
+    assert any(e['text'] == 'Header text' and e['location']['part'] == 'header' for e in texts)
+    assert any(e['text'] == 'Footer text' and e['location']['part'] == 'footer' for e in texts)
+    assert len([e for e in texts if e['text'] == 'Header text']) == 1
+
+def test_docx_header_footer_across_sections_no_duplicates(tmp_path):
+    from docx.enum.section import WD_SECTION_START
+    doc = Document()
+    doc.sections[0].header.paragraphs[0].text = 'Shared header'
+    doc.add_section(WD_SECTION_START.NEW_PAGE)
+    path = tmp_path / 'linked-sections.docx'
+    doc.save(path)
+    parsed = parse_document(path)
+    assert sum(e.get('text') == 'Shared header' for e in parsed['elements']) == 1
