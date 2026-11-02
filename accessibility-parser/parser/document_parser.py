@@ -71,7 +71,7 @@ def _docx_images(paragraph):
         yield {'type':'image','alt': im.get('alt'), 'decorative':False,
                'src': im.get('title') or None}
 
-def _docx_paragraph(paragraph, elements, location):
+def _docx_paragraph(paragraph, elements, location, standalone=True):
     text = _clean(paragraph.text)
     style = paragraph.style.name if paragraph.style is not None else ''
     match = re.match(r'^Heading\s*([1-6])$', style, re.I)
@@ -79,13 +79,38 @@ def _docx_paragraph(paragraph, elements, location):
         item = {'type':'heading','level':int(match.group(1)),'text':text,'location':location}
         item.update(_style_from_runs(paragraph.runs)); _add(elements,item)
     elif text:
-        item = {'type':'text','text':text,'standalone':True,'location':location}
+        item = {'type':'text','text':text,'standalone':standalone,'location':location}
         item.update(_style_from_runs(paragraph.runs)); _add(elements,item)
     for link_text, href in _docx_links(paragraph):
         _add(elements, {'type':'link','text':link_text,'href':href,'location':location})
     for img in _docx_images(paragraph):
         img['location'] = location
         _add(elements,img)
+
+def _docx_table(table, elements, location):
+    from docx.oxml.ns import qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+    if not table.rows:
+        return
+    header = any(row._tr.trPr is not None and row._tr.trPr.find(qn('w:tblHeader')) is not None
+                 for row in table.rows)
+    _add(elements, {'type':'table', 'rows':len(table.rows),
+                    'has_header_row':bool(header), 'has_header_column':False,
+                    'layout':False, 'location':location,
+                    'cells':[[cell.text for cell in row.cells] for row in table.rows]})
+    seen_cells = set()
+    for row in table.rows:
+        for cell in row.cells:
+            if cell._tc in seen_cells:
+                continue
+            seen_cells.add(cell._tc)
+            # Cell text is not a standalone section title merely because it is bold.
+            for child in cell._tc.iterchildren():
+                if child.tag == qn('w:p'):
+                    _docx_paragraph(Paragraph(child, cell), elements, location, standalone=False)
+                elif child.tag == qn('w:tbl'):
+                    _docx_table(Table(child, cell), elements, location)
 
 def _docx(path):
     from docx import Document
@@ -106,20 +131,7 @@ def _docx(path):
         if child.tag == qn('w:p'):
             _docx_paragraph(Paragraph(child,doc), elements, location)
         elif child.tag == qn('w:tbl'):
-            t=Table(child, doc)
-            if not t.rows: continue
-            header=any(row._tr.trPr is not None and row._tr.trPr.find(qn('w:tblHeader')) is not None for row in t.rows)
-            _add(elements, {'type':'table','rows':len(t.rows),
-                            'has_header_row':bool(header), 'has_header_column':False,
-                            'layout':False, 'location':location,
-                            'cells':[[cell.text for cell in row.cells] for row in t.rows]})
-            for row in t.rows:
-                for cell in row.cells:
-                    for p in cell.paragraphs:
-                        for link_text, href in _docx_links(p):
-                            _add(elements,{'type':'link','text':link_text,'href':href,'location':location})
-                        for img in _docx_images(p):
-                            img['location']=location; _add(elements,img)
+            _docx_table(Table(child, doc), elements, location)
     # Extract content from DOCX headers/footers. Word stores these in separate
     # document parts, so walking doc.element.body never reaches them.
     # Use a monotonically increasing position for engine-compatible locations;
@@ -129,9 +141,13 @@ def _docx(path):
     for section_number, section in enumerate(doc.sections, 1):
         for kind in ('header', 'first_page_header', 'even_page_header',
                      'footer', 'first_page_footer', 'even_page_footer'):
-            story = getattr(section, kind)
-            if story.is_linked_to_previous and section_number > 1:
+            if kind.startswith('first_page_') and not section.different_first_page_header_footer:
                 continue
+            if kind.startswith('even_page_') and not doc.settings.odd_and_even_pages_header_footer:
+                continue
+            story = getattr(section, kind)
+            # A later section can enable a variant inherited from an earlier section
+            # where it was disabled. Deduplicate by part only after the variant is active.
             part_name = str(story.part.partname)
             if part_name in seen_parts:
                 continue
@@ -142,22 +158,7 @@ def _docx(path):
                 if child.tag == qn('w:p'):
                     _docx_paragraph(Paragraph(child, story), elements, location)
                 elif child.tag == qn('w:tbl'):
-                    table = Table(child, story)
-                    if not table.rows:
-                        continue
-                    marked_header = any(row._tr.trPr is not None and row._tr.trPr.find(qn('w:tblHeader')) is not None for row in table.rows)
-                    _add(elements, {'type':'table', 'rows':len(table.rows),
-                                    'has_header_row':bool(marked_header), 'has_header_column':False,
-                                    'layout':False, 'location':location})
-                    for row in table.rows:
-                        for cell in row.cells:
-                            for para in cell.paragraphs:
-                                for label, target in _docx_links(para):
-                                    _add(elements, {'type':'link', 'text':label,
-                                                    'href':target, 'location':location})
-                                for img in _docx_images(para):
-                                    img['location'] = location
-                                    _add(elements, img)
+                    _docx_table(Table(child, story), elements, location)
     return {'metadata':metadata,'elements':elements,
             'parser_info':{'format':'docx','reading_order':'document body order (approximate for floating objects)',
                            'limitations':['DOCX has no stable page numbers without rendering',
@@ -181,13 +182,45 @@ def _html(path):
         out={'line':counter[0]}
         if tag.get('id'): out['selector']='#'+str(tag['id'])
         return out
+    separate = {'a','img','table','p','li','blockquote','pre','figcaption',
+                'h1','h2','h3','h4','h5','h6'}
+    def text_runs(tag):
+        # Resolve formatting at the text node's own parent, not at its paragraph.
+        runs = []
+        def collect(parent):
+            for child in parent.children:
+                if isinstance(child, NavigableString):
+                    style = styles.text_style(parent)
+                    if runs and runs[-1][1] == style:
+                        runs[-1][0] += str(child)
+                    else:
+                        runs.append([str(child), style])
+                elif isinstance(child, Tag) and child.name not in separate:
+                    if child.name == 'br' and runs:
+                        runs[-1][0] += ' '
+                    else:
+                        collect(child)
+        collect(tag)
+        return [(_clean(text), style) for text, style in runs if _clean(text)]
+    def add_semantic_text(item, node):
+        runs = text_runs(node)
+        if len(runs) == 1 and runs[0][0] == item['text']:
+            item.update(runs[0][1])
+            _add(elements, item)
+        else:
+            # Keep one heading/link for structure checks. Its text runs carry
+            # contrast styles separately so mixed colors are not flattened.
+            _add(elements, item)
+            for text, style in runs:
+                _add(elements, {'type':'text', 'text':text, 'standalone':False,
+                                'location':item['location'], **style})
     def walk(tag):
         for node in tag.children:
             if not isinstance(node,Tag): continue
             name=node.name.lower()
             if re.fullmatch(r'h[1-6]',name):
                 item={'type':'heading','level':int(name[1]),'text':_clean(node.get_text(' ',strip=True)),'location':loc(node)}
-                item.update(styles.text_style(node)); _add(elements,item)
+                add_semantic_text(item, node)
                 # Links/images inside headings still need independent checks.
                 walk(node)
             elif name=='img':
@@ -197,7 +230,7 @@ def _html(path):
             elif name=='a':
                 item={'type':'link','text':_clean(node.get_text(' ',strip=True)),
                       'href':node.get('href'),'location':loc(node)}
-                item.update(styles.text_style(node)); _add(elements,item)
+                add_semantic_text(item, node)
                 walk(node)
             elif name=='table':
                 rows=node.find_all('tr')
@@ -210,16 +243,13 @@ def _html(path):
                 for r in rows:
                     for c in r.find_all(['td','th'],recursive=False): walk(c)
             elif name in ('p','li','blockquote','pre','figcaption'):
-                # Avoid double counting nested structural components.
-                chunks=[]
-                for child in node.children:
-                    if isinstance(child,NavigableString): chunks.append(str(child))
-                    elif isinstance(child,Tag) and child.name not in ('a','img','table'):
-                        chunks.append(child.get_text(' ',strip=True))
-                value=_clean(' '.join(chunks))
-                if value:
-                    item={'type':'text','text':value,'standalone':True,'location':loc(node)}
-                    item.update(styles.text_style(node)); _add(elements,item)
+                runs = text_runs(node)
+                if runs:
+                    location = loc(node)
+                    for text, style in runs:
+                        _add(elements, {'type':'text', 'text':text,
+                                        'standalone':len(runs)==1,
+                                        'location':location, **style})
                 walk(node)
             else: walk(node)
     walk(root)
