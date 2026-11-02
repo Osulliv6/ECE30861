@@ -2,6 +2,12 @@
 
 This is a runnable Phase 4 system: choose an HTML, PDF, DOCX, or plain-text document, submit it for accessibility analysis, and display the findings. It can also repair the problems that have a safe automatic fix and return a repaired copy (see [Remediation](#remediation)). What changed in this phase is in [Phase 4 changes](#phase-4-changes). The Node server validates the upload (size, type, and that the content really is that format), passes it to Prathum's Python parser (`accessibility-parser/`), runs the WCAG engine (`engine/`) on the parsed structure, and returns the shared JSON report. Each upload is written to a private temporary directory only for the parser run and is deleted afterwards, whether parsing succeeds or fails.
 
+## Phase report and deployment status
+
+The Phase 4 report records a deployed and tested snapshot at commit `6fc234f` (October 18, 2026). For that snapshot, our deployed tester passed 13/13 tests, and a podmate's tester passed all 15 tests it executed against our service. The podmate's test confirmed a 10 MiB file completed within 30 seconds. The report also notes that our own suite did not yet include an automated timing check, and that a cold start on Render's free plan can take up to 60 seconds. These results describe the reported deployment snapshot; they do not by themselves verify later repository changes or the current live deployment.
+
+The report marked accessibility detection, remediation guidance, processing-failure handling, and response-time verification as partial. Its known gaps at that snapshot included no AI-generated suggestions or human-rubric review of guidance; incomplete tagged-PDF semantic extraction and contrast checks limited to inline colors; unavailable measured code, component, and acceptance-criteria coverage; and the implementation-specific `MALFORMED_REQUEST` and `PROCESSING_TIMEOUT` error codes. The implementation sections below describe the repository source and its later Phase 4 work. Check the deployed commit before treating those later source changes as live-service behavior.
+
 ## Testing our deployed service (for podmates)
 
 | What | URL |
