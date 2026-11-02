@@ -182,3 +182,14 @@ dialog .primary { margin-top: 24px; }
   .results-section { padding: 20px 0 0; }
   .finding { break-inside: avoid; }
 }
+
+.repair { border-top: 1px solid var(--border); padding: 20px 0 0; margin: 0 0 8px; }
+.repair h4 { font-size: 15px; font-weight: 600; margin: 0 0 9px; }
+.repair p { color: var(--muted); font-size: 13px; line-height: 1.75; margin: 0 0 14px; }
+.repair-changes { list-style: none; margin: 18px 0 22px; padding: 0; }
+.repair-changes li { border-bottom: 1px solid var(--border); padding: 12px 0; font-size: 13px; line-height: 1.6; }
+.repair-changes .review { display: inline-block; margin-left: 8px; font-size: 11px; color: #7a4a00; font-weight: 600; }
+.repair .remaining-heading { margin-top: 26px; }
+#repair-button { display: block; width: 100%; margin-top: 10px; }
+.repair-changes .change-criterion { font-weight: 600; }
+.repair-changes .change-location { color: var(--muted); font-size: 12px; }

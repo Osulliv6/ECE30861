@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeBaseUrl,parseFormats,validateFile,parseReport,requestJson,ApiError } from '../frontend/core.js';
+import { normalizeBaseUrl,parseFormats,validateFile,parseReport,parseRemediation,base64ToBytes,requestJson,ApiError } from '../frontend/core.js';
 import { sampleIssues,sampleClean } from '../frontend/samples.js';
 const formats={supported_mime_types:['application/pdf','text/html'],max_file_size_mb:10};
 test('deployment URLs require HTTPS; loopback remains available for development',()=>{
@@ -35,4 +35,12 @@ test('timeout and cancellation prevent success and have different errors',async(
   const blockedFetch=async(url,{signal})=>new Promise((resolve,reject)=>{if(signal.aborted)reject(new DOMException('Aborted','AbortError'));else signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true});});
   await assert.rejects(requestJson('','/analyze',{timeoutMs:10,fetchImpl:blockedFetch}),e=>e.code==='REQUEST_TIMEOUT');
   const c=new AbortController();const pending=requestJson('','/analyze',{signal:c.signal,fetchImpl:blockedFetch});c.abort();await assert.rejects(pending,e=>e.code==='REQUEST_CANCELED');
+});
+test('repair results require a file, typed changes, and contract-valid findings before and after',()=>{
+  const issue={wcag_criterion:'1.1.1',severity:'serious',location:null,description:'Missing alt.',suggested_fix:'Add alt.'};
+  const ok={remediated_file:{filename:'a-remediated.html',mime_type:'text/html',size_bytes:3,content_base64:'YWJj'},changes:[{wcag_criterion:'3.1.1',description:'Set language.',location:null,needs_review:true}],issues_before:[issue,issue],issues_after:[issue],message:'Review changes.'};
+  assert.equal(parseRemediation(ok),ok);
+  assert.deepEqual([...base64ToBytes(ok.remediated_file.content_base64)],[97,98,99]);
+  assert.equal(parseRemediation({...ok,issues_after:[]}).issues_after.length,0);
+  for(const bad of [null,{...ok,remediated_file:undefined},{...ok,remediated_file:{...ok.remediated_file,size_bytes:0}},{...ok,changes:[{wcag_criterion:'x',description:'d',location:null,needs_review:true}]},{...ok,changes:[{wcag_criterion:'1.1.1',description:'d',location:null}]},{...ok,issues_after:[{...issue,severity:'bad'}]},{...ok,message:''}])assert.throws(()=>parseRemediation(bad),ApiError);
 });

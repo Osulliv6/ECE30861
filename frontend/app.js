@@ -1,8 +1,8 @@
 import { API_BASE_URL, REQUEST_TIMEOUT_MS } from './config.js';
-import { ApiError, normalizeBaseUrl, parseFormats, acceptedTypes, validateFile, parseReport, requestJson, describeLocation } from './core.js';
+import { ApiError, normalizeBaseUrl, parseFormats, acceptedTypes, validateFile, parseReport, parseRemediation, base64ToBytes, requestJson, describeLocation } from './core.js';
 import { sampleIssues, sampleClean } from './samples.js';
 const $ = id => document.getElementById(id);
-const state = {base:API_BASE_URL,formats:null,file:null,report:null,busy:false,controller:null,connectionController:null,requestId:0,sample:false,documentName:'',level:'AA',interval:null};
+const state = {base:API_BASE_URL,formats:null,file:null,report:null,busy:false,controller:null,connectionController:null,requestId:0,sample:false,documentName:'',level:'AA',interval:null,repair:null};
 function announce(message) { $('announcer').textContent = message; }
 function showError(element,error) { element.textContent = error.message || String(error); element.hidden = false; }
 function notice(error) {
@@ -11,16 +11,16 @@ function notice(error) {
   const body=document.createElement('span'); body.textContent=error.message;
   $('notice').append(title,body); $('notice').hidden=false; announce(error.message);
 }
-function clearReport() { state.report=null;state.sample=false;$('report').hidden=true;$('export-button').hidden=true;$('empty-state').hidden=false;$('notice').hidden=true;$('findings').replaceChildren(); }
+function clearReport() { state.report=null;state.repair=null;$('repair').hidden=true;state.sample=false;$('report').hidden=true;$('export-button').hidden=true;$('empty-state').hidden=false;$('notice').hidden=true;$('findings').replaceChildren(); }
 function refreshButton() {
-  $('analyze-button').disabled=state.busy || !state.formats || !state.file;
+  $('analyze-button').disabled=$('repair-button').disabled=state.busy || !state.formats || !state.file;
   $('action-hint').textContent=state.busy?'Your document is being processed.':!state.formats?'Connect the analysis service to start a check.':!state.file?'Choose a supported document to start.':'Ready to check. Suggested fixes will appear in the report.';
 }
 function setBusy(busy) {
   state.busy=busy;
   $('progress').hidden=!busy;
   document.querySelector('.results-section').setAttribute('aria-busy',String(busy));
-  $('cancel-button').hidden=!busy;$('analyze-button').hidden=busy;
+  $('cancel-button').hidden=!busy;$('analyze-button').hidden=busy;$('repair-button').hidden=busy;
   ['file-input','remove-file','wcag-level','sample-issues','sample-clean','connect'].forEach(id=>$(id).disabled=busy);
   $('drop-zone').style.pointerEvents=busy?'none':'';
   if(busy) {
@@ -86,19 +86,47 @@ $('sample-issues').addEventListener('click',()=>renderReport(sampleIssues,{sampl
 $('sample-clean').addEventListener('click',()=>renderReport(sampleClean,{sample:true,name:'Example course handout.pdf',level:'AA'}));
 $('sample-reset').addEventListener('click',()=>{clearReport();$('sample-issues').focus();});
 $('wcag-level').addEventListener('change',()=>{clearReport();});
-$('analyze-form').addEventListener('submit',async e=>{
-  e.preventDefault();if(state.busy)return;$('file-error').hidden=true;
+async function submitDocument(repair){
+  if(state.busy)return;$('file-error').hidden=true;
   try { if(!state.formats)throw new ApiError('Connect the service before starting a check.');validateFile(state.file,state.formats); } catch(error){showError($('file-error'),error);return;}
   clearReport();state.documentName=state.file.name;state.level=$('wcag-level').value;
   const body=new FormData();body.append('file',state.file,state.file.name);body.append('wcag_level',state.level);
-  const id=++state.requestId;state.controller=new AbortController();setBusy(true);announce('Check started. Waiting for the service.');
+  const id=++state.requestId;state.controller=new AbortController();setBusy(true);announce(repair?'Check and repair started. Waiting for the service.':'Check started. Waiting for the service.');
   try {
-    const data=await requestJson(state.base,'/analyze',{method:'POST',body,signal:state.controller.signal,timeoutMs:REQUEST_TIMEOUT_MS});
+    const data=await requestJson(state.base,repair?'/remediate':'/analyze',{method:'POST',body,signal:state.controller.signal,timeoutMs:REQUEST_TIMEOUT_MS});
     if(id!==state.requestId)return;
-    const report=parseReport(data);setBusy(false);state.controller=null;
+    const result=repair?parseRemediation(data):null;
+    const report=repair?{issues:result.issues_after,message:result.message}:parseReport(data);
+    setBusy(false);state.controller=null;
     // Release the selected upload; reports remain only in page memory.
     state.file=null;$('file-input').value='';$('file-summary').hidden=true;refreshButton();renderReport(report);
-  } catch(error){if(id!==state.requestId)return;setBusy(false);state.controller=null;notice(error);$('analyze-button').focus();}
+    if(result)renderRepair(result);
+  } catch(error){if(id!==state.requestId)return;setBusy(false);state.controller=null;notice(error);$(repair?'repair-button':'analyze-button').focus();}
+}
+function renderRepair(result){
+  state.repair=result;
+  const fixed=result.issues_before.length-result.issues_after.length, n=result.changes.length;
+  $('report-title').textContent=result.issues_after.length?`${result.issues_after.length} ${result.issues_after.length===1?'finding remains':'findings remain'} after repair`:'No supported violations remain after repair';
+  $('repair-summary').textContent=n?`${n} ${n===1?'change was':'changes were'} made. Findings went from ${result.issues_before.length} to ${result.issues_after.length}${fixed>0?` (${fixed} resolved)`:''}. Changes marked “Review” were automatic choices; confirm them in the repaired document.`:`No automatic repairs apply to this document. ${result.issues_after.length?'The remaining findings need manual changes.':''}`;
+  $('repair-changes').replaceChildren(...result.changes.map(change=>{
+    const li=document.createElement('li');
+    addText(li,'span','change-criterion',`WCAG ${change.wcag_criterion} · `);
+    li.append(change.description);
+    if(change.location?.snippet){li.append(' ');addText(li,'span','change-location',`(${change.location.snippet})`);}
+    if(change.needs_review)addText(li,'span','review','Review');
+    return li;
+  }));
+  $('download-repaired').textContent=`Download ${result.remediated_file.filename}`;
+  $('repair').hidden=false;
+  announce(`${n} automatic ${n===1?'repair':'repairs'}. ${result.issues_after.length} findings remain.`);
+}
+$('analyze-form').addEventListener('submit',e=>{e.preventDefault();submitDocument(false);});
+$('repair-button').addEventListener('click',()=>submitDocument(true));
+$('download-repaired').addEventListener('click',()=>{
+  if(!state.repair)return;
+  const file=state.repair.remediated_file;
+  const url=URL.createObjectURL(new Blob([base64ToBytes(file.content_base64)],{type:file.mime_type}));
+  const a=document.createElement('a');a.href=url;a.download=file.filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);announce('Repaired document downloaded.');
 });
 $('cancel-button').addEventListener('click',()=>{
   state.requestId++;state.controller?.abort();state.controller=null;setBusy(false);
@@ -106,7 +134,8 @@ $('cancel-button').addEventListener('click',()=>{
 });
 $('export-button').addEventListener('click',()=>{
   if(!state.report)return;
-  const data={...state.report,frontend_context:{document_name:state.documentName,wcag_level:state.level,sample:state.sample,scope_note:'Only supported checks were evaluated; this report does not certify full ADA or WCAG compliance.'}};
+  const repair=state.repair?{changes:state.repair.changes,issues_before:state.repair.issues_before,remediated_filename:state.repair.remediated_file.filename}:undefined;
+  const data={...state.report,...(repair?{repair}:{}),frontend_context:{document_name:state.documentName,wcag_level:state.level,sample:state.sample,scope_note:'Only supported checks were evaluated; this report does not certify full ADA or WCAG compliance.'}};
   const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download=state.sample?'sample-accessibility-report.json':'accessibility-report.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);announce('JSON report downloaded.');
 });

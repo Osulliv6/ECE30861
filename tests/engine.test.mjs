@@ -66,3 +66,16 @@ test('checks the parser could not observe are skipped instead of reported as mis
   assert.deepEqual(criteria(analyze({metadata:{not_extracted:[]},elements:[]})),['2.4.2','3.1.1']);
   for(const bad of ['alt_text',[1],{}])assert.throws(()=>analyze({metadata:{not_extracted:bad},elements:[]}),EngineError);
 });
+test('untagged PDFs get one serious 1.3.1 finding; tagged or non-PDF documents do not',()=>{
+  const untagged=analyze({metadata:{...meta,tagged:false,not_extracted:['alt_text','headings','tables']},elements:[{type:'image'}]});
+  assert.deepEqual(untagged.issues.map(i=>[i.wcag_criterion,i.severity,i.location]),[['1.3.1','serious',null]]);
+  assert.equal(parseReport(untagged),untagged);
+  assert.deepEqual(analyze({metadata:{...meta,tagged:true},elements:[]}).issues,[]);
+  assert.deepEqual(run([]).issues,[]);
+  assert.deepEqual(criteria(analyze({metadata:{...meta,tagged:false},elements:[]},{wcagLevel:'A'})),['1.3.1']);
+  assert.throws(()=>analyze({metadata:{...meta,tagged:'no'},elements:[]}),EngineError);
+});
+test('contrast is skipped when the parser could not determine the colors',()=>{
+  assert.deepEqual(run([{type:'text',text:'On an image',contrast_unknown:true}]).issues,[]);
+  assert.deepEqual(criteria(run([{type:'link',text:'Syllabus',href:'/s',color:'#bbbbbb'}])),['1.4.3']);
+});

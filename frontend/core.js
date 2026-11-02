@@ -79,3 +79,19 @@ export function describeLocation(location) {
   if (location.snippet) parts.push(`Content: ${location.snippet}`);
   return parts;
 }
+// POST /remediate response (team extension; see README "Remediation"). Validates the repaired
+// file and change list, and that both finding lists satisfy the shared report contract.
+export function parseRemediation(data) {
+  const file = data?.remediated_file;
+  if (!data || data.error || !file || typeof file.filename !== 'string' || !file.filename.trim() || typeof file.mime_type !== 'string' || typeof file.content_base64 !== 'string' || !Number.isInteger(file.size_bytes) || file.size_bytes < 1 || !Array.isArray(data.changes) || typeof data.message !== 'string' || !data.message.trim()) throw new ApiError('The service did not return a complete repair result.', 'INVALID_RESPONSE');
+  for (const change of data.changes) {
+    if (!change || typeof change.wcag_criterion !== 'string' || !/^\d+\.\d+\.\d+$/.test(change.wcag_criterion) || typeof change.description !== 'string' || !change.description.trim() || typeof change.needs_review !== 'boolean' || !Object.hasOwn(change,'location')) throw new ApiError('A repair is missing required fields.', 'INVALID_RESPONSE');
+  }
+  for (const key of ['issues_before','issues_after']) parseReport({issues:data[key], message:data.message});
+  return data;
+}
+export function base64ToBytes(base64) {
+  const binary = atob(base64), bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}

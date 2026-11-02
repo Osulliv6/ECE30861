@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { analyze, EngineError } from './engine/index.mjs';
-import { parseUpload, ParserError } from './accessibility-parser/integration.mjs';
+import { parseUpload, remediateUpload, ParserError } from './accessibility-parser/integration.mjs';
 import { createSystemInterface, TestInterfaceError } from './testing/system.mjs';
 import { createTesterInterface } from './testing/tester.mjs';
 
@@ -41,26 +41,73 @@ function parseMultipart(body, contentType) {
 function setCors(req,res,origins) { const origin = req.headers.origin; if (origin && (origins === '*' || origins.includes(origin))) { res.setHeader('Access-Control-Allow-Origin',origin); res.setHeader('Vary','Origin'); } }
 async function serveStatic(req,res) { try { const path = decodeURIComponent(new URL(req.url,'http://localhost').pathname), file = resolve(frontendRoot,'.' + (path === '/' ? '/index.html' : path)); if (!file.startsWith(frontendRoot + sep)) return false; const data = await readFile(file); res.writeHead(200,{'Content-Type':mime[extname(file)] || 'application/octet-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(req.method === 'HEAD' ? undefined : data); return true; } catch { return false; } }
 
-async function analyzeRequest(req, res, parserOptions) {
+// Reads and validates one document upload shared by /analyze and /remediate. Returns
+// {file, type, fields} or null after sending the error response.
+async function readUpload(req, res) {
   if (Number(req.headers['content-length']) > MAX_FILE_SIZE_BYTES + 16_384) return failure(res,413,'FILE_TOO_LARGE','The file exceeds the 10 MB service limit.');
   if (!req.headers['content-type']?.toLowerCase().startsWith('multipart/form-data')) return failure(res,400,'MALFORMED_REQUEST','Submit one file as multipart/form-data.');
+  const parts = parseMultipart(await readBody(req,MAX_FILE_SIZE_BYTES + 16_384),req.headers['content-type']);
+  const file = parts.find(part=>part.name === 'file' && part.filename !== undefined);
+  const field = name => parts.find(part=>part.name === name && part.filename === undefined)?.data.toString('utf8');
+  const fields = {level:field('wcag_level') || 'AA', language:field('language'), title:field('title')};
+  if (!file) return failure(res,400,'MISSING_FILE','Submit one file in the "file" field.');
+  if (!file.data.length) return failure(res,422,'UNPROCESSABLE_FILE','The file is empty.');
+  if (file.data.length > MAX_FILE_SIZE_BYTES) return failure(res,413,'FILE_TOO_LARGE','The file exceeds the 10 MB service limit.');
+  const type = uploadType(file);
+  if (!type) return failure(res,415,'UNSUPPORTED_MEDIA_TYPE','Supported formats are HTML, PDF, DOCX, and plain text.');
+  if (!['A','AA'].includes(fields.level)) return failure(res,400,'INVALID_WCAG_LEVEL','wcag_level must be "A" or "AA".');
+  if (!FORMATS[type].matches(file.data)) return failure(res,422,'UNPROCESSABLE_FILE','The file is corrupt or does not match its file type.');
+  return {file, type, fields};
+}
+
+function uploadFailure(res, error) {
+  if (error?.code === 'FILE_TOO_LARGE') return failure(res,413,'FILE_TOO_LARGE','The file exceeds the 10 MB service limit.');
+  if (error instanceof ParserError) { res.logFields = {detail:error.message}; return failure(res,error.status,error.code,error.message); }
+  if (error instanceof EngineError) { res.logFields = {detail:error.message}; return failure(res,503,'PROCESSING_UNAVAILABLE','The file could not be evaluated.'); }
+  return failure(res,400,'MALFORMED_REQUEST','The upload could not be read.');
+}
+
+async function analyzeRequest(req, res, parserOptions) {
   try {
-    const parts = parseMultipart(await readBody(req,MAX_FILE_SIZE_BYTES + 16_384),req.headers['content-type']);
-    const file = parts.find(part=>part.name === 'file' && part.filename !== undefined), level = parts.find(part=>part.name === 'wcag_level')?.data.toString('utf8') || 'AA';
-    if (!file) return failure(res,400,'MISSING_FILE','Submit one file in the "file" field.');
-    if (!file.data.length) return failure(res,422,'UNPROCESSABLE_FILE','The file is empty.');
-    if (file.data.length > MAX_FILE_SIZE_BYTES) return failure(res,413,'FILE_TOO_LARGE','The file exceeds the 10 MB service limit.');
-    const type = uploadType(file);
-    if (!type) return failure(res,415,'UNSUPPORTED_MEDIA_TYPE','Supported formats are HTML, PDF, DOCX, and plain text.');
-    if (!['A','AA'].includes(level)) return failure(res,400,'INVALID_WCAG_LEVEL','wcag_level must be "A" or "AA".');
-    if (!FORMATS[type].matches(file.data)) return failure(res,422,'UNPROCESSABLE_FILE','The file is corrupt or does not match its file type.');
-    return sendJson(res,200,analyze(await parseUpload(file.data,FORMATS[type].ext,parserOptions),{wcagLevel:level}));
-  } catch (error) {
-    if (error?.code === 'FILE_TOO_LARGE') return failure(res,413,'FILE_TOO_LARGE','The file exceeds the 10 MB service limit.');
-    if (error instanceof ParserError) { res.logFields = {detail:error.message}; return failure(res,error.status,error.code,error.message); }
-    if (error instanceof EngineError) { res.logFields = {detail:error.message}; return failure(res,503,'PROCESSING_UNAVAILABLE','The file could not be evaluated.'); }
-    return failure(res,400,'MALFORMED_REQUEST','The upload could not be read.');
-  }
+    const upload = await readUpload(req,res);
+    if (!upload) return;
+    return sendJson(res,200,analyze(await parseUpload(upload.file.data,FORMATS[upload.type].ext,parserOptions),{wcagLevel:upload.fields.level}));
+  } catch (error) { return uploadFailure(res,error); }
+}
+
+// BCP 47 language tag, as checked by the engine for WCAG 3.1.1.
+const LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i;
+export const TITLE_MAX_LENGTH = 200;
+export const REMEDIATION_MESSAGE = 'Automated repairs were applied where a safe fix exists. Review every change marked for review, fix the remaining findings by hand, and recheck the document. This does not certify full ADA or WCAG compliance.';
+// Download name for the repaired file: the uploaded name reduced to safe characters.
+function remediatedName(filename, ext) {
+  const stem = (filename || '').replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 80) || 'document';
+  return `${stem}-remediated${ext}`;
+}
+
+// POST /remediate: repairs what can be repaired safely and returns the repaired file
+// (base64), the list of changes, and the findings before and after (re-analyzed by the engine).
+async function remediateRequest(req, res, parserOptions) {
+  try {
+    const upload = await readUpload(req,res);
+    if (!upload) return;
+    const {language, title, level} = upload.fields;
+    if (language !== undefined && !LANGUAGE_TAG.test(language.trim())) return failure(res,400,'INVALID_LANGUAGE','language must be a BCP 47 tag such as "en" or "en-US".');
+    // Control characters are removed so the title is safe in every document format.
+    const cleanTitle = title?.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+    if (cleanTitle !== undefined && cleanTitle.length > TITLE_MAX_LENGTH) return failure(res,400,'INVALID_TITLE',`title must be at most ${TITLE_MAX_LENGTH} characters.`);
+    const {ext} = FORMATS[upload.type];
+    const result = await remediateUpload(upload.file.data, ext, {language:language?.trim() || undefined, title:cleanTitle || undefined}, parserOptions);
+    const before = analyze(result.before,{wcagLevel:level}), after = analyze(result.after,{wcagLevel:level});
+    res.logFields = {changes:result.changes.length, issues_before:before.issues.length, issues_after:after.issues.length};
+    return sendJson(res,200,{
+      remediated_file:{filename:remediatedName(upload.file.filename, ext), mime_type:upload.type, size_bytes:result.bytes.length, content_base64:result.bytes.toString('base64')},
+      changes:result.changes,
+      issues_before:before.issues,
+      issues_after:after.issues,
+      message:REMEDIATION_MESSAGE,
+    });
+  } catch (error) { return uploadFailure(res,error); }
 }
 
 // Cross-team testing interface: errors use {message, source} as the course spec requires.
@@ -93,7 +140,7 @@ const TEST_ROUTES = {
 // Successful health checks and static files are skipped to keep the hosting platform's checks out of the log.
 function logRequest(log, req, res, path, started) {
   res.on('finish', () => {
-    const isStatic = !TEST_ROUTES[path] && !['/health','/formats','/analyze'].includes(path);
+    const isStatic = !TEST_ROUTES[path] && !['/health','/formats','/analyze','/remediate'].includes(path);
     if (res.statusCode < 400 && (path === '/health' || isStatic)) return;
     log(JSON.stringify({time:new Date().toISOString(), method:req.method, path, status:res.statusCode, duration_ms:Math.round(performance.now() - started), ...res.logFields}));
   });
@@ -118,6 +165,7 @@ export function createServer({allowedOrigins = (process.env.CORS_ORIGINS || 'htt
     if (req.method === 'GET' && path === '/health') return sendJson(res,200,{status:'ok'});
     if (req.method === 'GET' && path === '/formats') return sendJson(res,200,{supported_mime_types:SUPPORTED_MIME_TYPES,max_file_size_mb:10});
     if (req.method === 'POST' && path === '/analyze') return analyzeRequest(req,res,parserOptions);
+    if (req.method === 'POST' && path === '/remediate') return remediateRequest(req,res,parserOptions);
     if (['GET','HEAD'].includes(req.method) && await serveStatic(req,res)) return;
     failure(res,404,'NOT_FOUND','Endpoint not found.');
   });

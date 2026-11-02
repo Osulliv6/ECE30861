@@ -10,6 +10,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .css import StyleResolver
+from .pdf_tags import read_structure
+
 SUPPORTED_MIME_TYPES = [
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/pdf', 'text/html', 'text/plain'
@@ -128,6 +131,9 @@ def _html(path):
     soup=BeautifulSoup(raw, 'html.parser')
     title = _clean(soup.title.get_text(' ',strip=True)) if soup.title else ''
     metadata={'title':title,'language':soup.html.get('lang') if soup.html else None,'format':'html'}
+    # Resolve embedded and inline CSS before <style> elements are removed.
+    styles=StyleResolver(soup)
+    if styles.external_stylesheets: metadata['external_stylesheets']=styles.external_stylesheets
     for unwanted in soup(['script','style','noscript','template']): unwanted.decompose()
     root=soup.body or soup
     elements=[]; counter=[0]
@@ -136,36 +142,13 @@ def _html(path):
         out={'line':counter[0]}
         if tag.get('id'): out['selector']='#'+str(tag['id'])
         return out
-    def inline_style(tag):
-        styles={}
-        css=tag.get('style','')
-        for key, field in [('color','color'),('background-color','background'),('font-size','font_size_pt')]:
-            m=re.search(r'(?:^|;)\s*'+re.escape(key)+r'\s*:\s*([^;]+)',css,re.I)
-            if m:
-                val=m.group(1).strip()
-                if field=='font_size_pt':
-                    sz=re.match(r'([\d.]+)(pt|px)', val)
-                    if sz: styles[field]=round(float(sz.group(1))*(.75 if sz.group(2)=='px' else 1),2)
-                else: styles[field]=val
-        # CSS color is inherited. Follow inline declarations on ancestors when
-        # this element does not specify one; stylesheets are not evaluated.
-        if 'color' not in styles:
-            for parent in tag.parents:
-                if not isinstance(parent, Tag): continue
-                parent_css = parent.get('style', '')
-                color = re.search(r'(?:^|;)\s*color\s*:\s*([^;]+)', parent_css, re.I)
-                if color:
-                    styles['color'] = color.group(1).strip()
-                    break
-        if tag.name in ['b','strong'] or re.search(r'font-weight\s*:\s*(bold|[7-9]00)',css,re.I): styles['bold']=True
-        return styles
     def walk(tag):
         for node in tag.children:
             if not isinstance(node,Tag): continue
             name=node.name.lower()
             if re.fullmatch(r'h[1-6]',name):
                 item={'type':'heading','level':int(name[1]),'text':_clean(node.get_text(' ',strip=True)),'location':loc(node)}
-                item.update(inline_style(node)); _add(elements,item)
+                item.update(styles.text_style(node)); _add(elements,item)
                 # Links/images inside headings still need independent checks.
                 walk(node)
             elif name=='img':
@@ -173,8 +156,9 @@ def _html(path):
                 _add(elements,{'type':'image','alt':alt,'decorative':alt=='',
                                'src':node.get('src'),'location':loc(node)})
             elif name=='a':
-                _add(elements,{'type':'link','text':_clean(node.get_text(' ',strip=True)),
-                               'href':node.get('href'),'location':loc(node)})
+                item={'type':'link','text':_clean(node.get_text(' ',strip=True)),
+                      'href':node.get('href'),'location':loc(node)}
+                item.update(styles.text_style(node)); _add(elements,item)
                 walk(node)
             elif name=='table':
                 rows=node.find_all('tr')
@@ -196,61 +180,138 @@ def _html(path):
                 value=_clean(' '.join(chunks))
                 if value:
                     item={'type':'text','text':value,'standalone':True,'location':loc(node)}
-                    item.update(inline_style(node)); _add(elements,item)
+                    item.update(styles.text_style(node)); _add(elements,item)
                 walk(node)
             else: walk(node)
     walk(root)
     return {'metadata':metadata,'elements':elements,
             'parser_info':{'format':'html','reading_order':'DOM order',
-                           'limitations':['External CSS and computed contrast are not evaluated',
+                           'limitations':['External stylesheets (<link>) are not fetched; embedded <style> and inline styles are evaluated',
+                                          'Conditional @media/@supports rules, CSS variables, background images, and gradients are not evaluated; affected contrast is skipped',
                                           'JavaScript-generated document content is not executed']}}
+
+HEADING_ROLES={f'H{i}':i for i in range(1,7)}
+
+def _pdf_span_style(span):
+    return {'font_size_pt':round(span.get('size',0),2),
+            'bold':'bold' in span.get('font','').lower() or bool(span.get('flags',0) & 16),
+            'color':_rgb_from_int(span.get('color'))}
+
+def _pdf_text_lines(block, page_index, elements):
+    lines=[l for l in block.get('lines',[]) if _clean(' '.join(s.get('text','') for s in l.get('spans',[])))]
+    for line in lines:
+        spans=line.get('spans',[])
+        item={'type':'text','text':_clean(' '.join(s.get('text','') for s in spans)),
+              # A line is "standalone" (could be a visual heading) only when it is its own block.
+              'standalone':len(lines)==1,'location':{'page':page_index}}
+        item.update(_pdf_span_style(spans[0])); _add(elements,item)
+
+def _pdf_struct_text(blocks):
+    parts=[]
+    for b in blocks:
+        if 'std' in b or 'raw' in b: parts.append(_pdf_struct_text(b.get('blocks',[])))
+        elif b.get('type')==0:
+            parts.extend(s.get('text','') for l in b.get('lines',[]) for s in l.get('spans',[]))
+    return ' '.join(parts)
+
+def _pdf_first_span(blocks):
+    for b in blocks:
+        if 'std' in b or 'raw' in b:
+            span=_pdf_first_span(b.get('blocks',[]))
+            if span: return span
+        elif b.get('type')==0:
+            for l in b.get('lines',[]):
+                for s in l.get('spans',[]):
+                    if s.get('text','').strip(): return s
+    return None
+
+def _pdf_tagged_page(blocks, page_index, elements, stats):
+    """Headings and text from MuPDF's structured text, which follows the tag tree."""
+    for b in blocks:
+        if 'std' in b or 'raw' in b:
+            stats['structure_blocks']+=1
+            role=b.get('std') or b.get('raw')
+            children=b.get('blocks',[])
+            if role in HEADING_ROLES:
+                item={'type':'heading','level':HEADING_ROLES[role],'text':_clean(_pdf_struct_text(children)),
+                      'location':{'page':page_index}}
+                span=_pdf_first_span(children)
+                if span: item.update(_pdf_span_style(span))
+                _add(elements,item)
+            elif role in ('Figure','Artifact'):
+                continue  # Figures come from the tag tree with their alt text; text inside a chart is part of it.
+            else:
+                _pdf_tagged_page(children, page_index, elements, stats)
+        elif b.get('type')==0:
+            _pdf_text_lines(b, page_index, elements)
 
 def _pdf(path):
     import pymupdf as fitz
     doc=fitz.open(path)
     if doc.needs_pass: raise ParseError('UNPROCESSABLE_FILE','Password-protected PDFs are not supported.')
-    # Heading, table and alt-text semantics are not read from PDF tags; the engine skips those checks.
-    metadata={'title':_clean(doc.metadata.get('title')),'language':None,'format':'pdf',
-              'not_extracted':['alt_text','headings','tables']}
+    structure=read_structure(doc)
+    tagged=bool(structure and structure['elements'])
+    metadata={'title':_clean(doc.metadata.get('title')),'language':None,'format':'pdf','tagged':tagged}
     try:
         lang=doc.pdf_catalog() and doc.xref_get_key(doc.pdf_catalog(),'Lang')
         if lang and lang[0]=='string': metadata['language']=lang[1].strip('()')
     except Exception: pass
-    elements=[]
+    elements=[]; stats={'structure_blocks':0}
     for page_index,page in enumerate(doc,1):
-        blocks=page.get_text('dict',sort=True)['blocks']
-        links=page.get_links()
-        for block in blocks:
-            location={'page':page_index}
-            if block['type']==1:
-                # Page image content is observable; alt semantics may be absent even in tagged PDFs.
-                _add(elements,{'type':'image','alt':None,'decorative':False,
-                               'src':f"page-{page_index}-image-{block.get('number',0)}",'location':location})
-                continue
-            lines=block.get('lines',[])
-            for line in lines:
-                spans=line.get('spans',[])
-                value=_clean(' '.join(s.get('text','') for s in spans))
-                if not value: continue
-                style=spans[0]
-                item={'type':'text','text':value,'standalone':True,'location':location,
-                      'font_size_pt':round(style.get('size',0),2),
-                      'bold':'bold' in style.get('font','').lower(),
-                      'color':_rgb_from_int(style.get('color'))}
-                _add(elements,item)
+        if tagged:
+            blocks=page.get_text('dict',flags=fitz.TEXTFLAGS_DICT|fitz.TEXT_COLLECT_STRUCTURE)['blocks']
+            _pdf_tagged_page(blocks, page_index, elements, stats)
+            for number,figure in enumerate(structure['figures'],1):
+                if figure['page']==page_index:
+                    _add(elements,{'type':'image','alt':figure['alt'],'decorative':False,'src':f'Figure {number}',
+                                   'location':{'page':page_index}})
+            for table in structure['tables']:
+                rows=table['rows']
+                if table['page']==page_index:
+                    _add(elements,{'type':'table','rows':len(rows),
+                                   'has_header_row':bool(rows) and 'TH' in rows[0],
+                                   'has_header_column':bool(rows) and all(r and r[0]=='TH' for r in rows),
+                                   'layout':False,'location':{'page':page_index}})
+        else:
+            for block in page.get_text('dict',sort=True)['blocks']:
+                if block['type']==1:
+                    # An untagged PDF cannot carry alt text; the engine reports the missing tags instead.
+                    _add(elements,{'type':'image','alt':None,'decorative':False,
+                                   'src':f"page-{page_index}-image-{block.get('number',0)}",'location':{'page':page_index}})
+                elif block['type']==0:
+                    _pdf_text_lines(block, page_index, elements)
         # PDF link target rectangles may not cleanly correspond to extracted words.
-        for link in links:
+        for link in page.get_links():
             if not link.get('uri'): continue
             rect=link.get('from')
             label=_clean(page.get_textbox(rect)) if rect is not None else ''
             _add(elements,{'type':'link','text':label,'href':link['uri'],'location':{'page':page_index}})
+    if tagged:
+        for item in structure['figures']+structure['tables']:
+            if item['page'] is None:  # no page reference anywhere in the element's subtree
+                rows=item.get('rows')
+                _add(elements,{'type':'image','alt':item['alt'],'decorative':False,'src':None} if rows is None else
+                     {'type':'table','rows':len(rows),'has_header_row':bool(rows) and 'TH' in rows[0],
+                      'has_header_column':bool(rows) and all(r and r[0]=='TH' for r in rows),'layout':False})
+        # Without a ParentTree MuPDF cannot map page content to tags, so heading text is unknown.
+        if not stats['structure_blocks'] and structure['headings']:
+            metadata['not_extracted']=['headings']
+    else:
+        # Untagged: headings, tables and alt text do not exist for assistive technology.
+        # The engine reports the missing tags once instead of guessing structure from fonts.
+        metadata['not_extracted']=['alt_text','headings','tables']
     doc.close()
+    limitations=['Background colors and OCR of scanned pages are not supported',
+                 'PDF links are appended per page after extracted page content']
+    if tagged:
+        limitations+=['Structure roles other than headings, figures, and tables are not evaluated',
+                      'Reading order of tags versus visual order is not compared']
+    else:
+        limitations+=['The PDF is untagged, so heading, table, and image semantics are absent']
     return {'metadata':metadata,'elements':elements,
-            'parser_info':{'format':'pdf','reading_order':'page order and spatial text sorting (approximate)',
-                           'limitations':['PDF heading semantics, tagging, table headers, and alt text are not reliably exposed by this parser',
-                                          'Untyped PDF text is not classified as a heading',
-                                          'Background colors and OCR of scanned pages are not supported',
-                                          'PDF links are appended per page after extracted page content']}}
+            'parser_info':{'format':'pdf','tagged':tagged,
+                           'reading_order':'tag tree order' if tagged else 'page order and spatial text sorting (approximate)',
+                           'limitations':limitations}}
 
 def _txt(path):
     raw=Path(path).read_text(encoding='utf-8-sig')

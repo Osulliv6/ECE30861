@@ -3,7 +3,7 @@ info:
   title: ECE 30861 ADA Accessibility System
   version: 1.0.0
   description: >
-    Project API (health, formats, analyze) plus the system side of the cross-team
+    Project API (health, formats, analyze), the team's remediation extension (remediate), plus the system side of the cross-team
     testing interface (/test/setup, /test/report). The project API is stateless, so
     project requests do not carry a session ID.
 servers:
@@ -63,6 +63,39 @@ paths:
         '415': {$ref: '#/components/responses/ProjectError'}
         '422': {$ref: '#/components/responses/ProjectError'}
         '503': {$ref: '#/components/responses/ProjectError'}
+  /remediate:
+    post:
+      summary: Repair what can be repaired safely and report what remains (team extension)
+      description: >
+        Not part of the shared pod contract. Validates the upload exactly like /analyze,
+        writes a repaired copy, and re-analyzes it. Repairs: document language (3.1.1),
+        title (2.4.2), empty headings (2.4.6), heading-level gaps and table header rows
+        (1.3.1), and low-contrast text colors (1.4.3) in HTML and DOCX; title and language
+        in PDF. Alternative text, link wording, and PDF tags are never generated.
+        language and title are used only when the document has none.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+                wcag_level: {type: string, enum: [A, AA], default: AA}
+                language: {type: string, pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$', description: 'BCP 47 tag; default "en" (marked needs_review).'}
+                title: {type: string, maxLength: 200, description: 'Default is the first heading or line of text (marked needs_review).'}
+      responses:
+        '200':
+          description: Repaired file, list of changes, and findings before and after
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Remediation'}
+        '400': {$ref: '#/components/responses/ProjectError'}
+        '413': {$ref: '#/components/responses/ProjectError'}
+        '415': {$ref: '#/components/responses/ProjectError'}
+        '422': {$ref: '#/components/responses/ProjectError'}
+        '503': {$ref: '#/components/responses/ProjectError'}
   /test/setup:
     post:
       summary: Register a test session and return its ID when ready
@@ -116,6 +149,25 @@ paths:
         '404': {$ref: '#/components/responses/TestError'}
 components:
   schemas:
+    Location:
+      oneOf:
+        - type: 'null'
+        - type: object
+          minProperties: 1
+          properties:
+            selector: {type: string}
+            line: {type: integer, minimum: 1}
+            page: {type: integer, minimum: 1}
+            snippet: {type: string}
+    Issue:
+      type: object
+      required: [wcag_criterion, location, severity, description, suggested_fix]
+      properties:
+        wcag_criterion: {type: string, pattern: '^\d+\.\d+\.\d+$'}
+        location: {$ref: '#/components/schemas/Location'}
+        severity: {type: string, enum: [critical, serious, moderate, minor]}
+        description: {type: string, minLength: 1}
+        suggested_fix: {type: string, minLength: 1}
     Report:
       type: object
       required: [issues]
@@ -123,24 +175,37 @@ components:
       properties:
         issues:
           type: array
+          items: {$ref: '#/components/schemas/Issue'}
+        message: {type: string, minLength: 1}
+    Remediation:
+      type: object
+      required: [remediated_file, changes, issues_before, issues_after, message]
+      properties:
+        remediated_file:
+          type: object
+          required: [filename, mime_type, size_bytes, content_base64]
+          properties:
+            filename: {type: string, minLength: 1, description: 'Upload name reduced to safe characters, plus "-remediated".'}
+            mime_type: {type: string}
+            size_bytes: {type: integer, minimum: 1}
+            content_base64: {type: string, contentEncoding: base64}
+        changes:
+          type: array
           items:
             type: object
-            required: [wcag_criterion, location, severity, description, suggested_fix]
+            required: [wcag_criterion, description, location, needs_review]
             properties:
               wcag_criterion: {type: string, pattern: '^\d+\.\d+\.\d+$'}
-              location:
-                oneOf:
-                  - type: 'null'
-                  - type: object
-                    minProperties: 1
-                    properties:
-                      selector: {type: string}
-                      line: {type: integer, minimum: 1}
-                      page: {type: integer, minimum: 1}
-                      snippet: {type: string}
-              severity: {type: string, enum: [critical, serious, moderate, minor]}
               description: {type: string, minLength: 1}
-              suggested_fix: {type: string, minLength: 1}
+              location: {$ref: '#/components/schemas/Location'}
+              needs_review: {type: boolean, description: 'True when the service chose a value or changed appearance; a person should confirm it.'}
+        issues_before:
+          type: array
+          items: {$ref: '#/components/schemas/Issue'}
+        issues_after:
+          type: array
+          description: Findings when the repaired file is analyzed, identical to POST /analyze on it.
+          items: {$ref: '#/components/schemas/Issue'}
         message: {type: string, minLength: 1}
     CoverageMeasure:
       type: object

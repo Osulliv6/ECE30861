@@ -1,7 +1,7 @@
 // Accessibility analysis / WCAG engine.
 // Input: a parsed document (see README "Accessibility engine" for the format).
 // Output: the shared report contract consumed by the frontend: {issues:[...], message?}.
-import { checkAltText, checkHeadings, checkContrast, checkLinks, checkTables, checkMetadata } from './checks.mjs';
+import { checkAltText, checkHeadings, checkContrast, checkLinks, checkTables, checkMetadata, checkTagging } from './checks.mjs';
 
 export class EngineError extends Error {
   constructor(message, code = 'INVALID_PARSED_DOCUMENT') { super(message); this.name = 'EngineError'; this.code = code; }
@@ -19,7 +19,7 @@ export const SUPPORTED_CRITERIA = {
 };
 
 export const NO_ISSUE_MESSAGE = 'No supported violations were detected. This does not certify full ADA or WCAG compliance.';
-const CHECKS = [checkMetadata, checkAltText, checkHeadings, checkContrast, checkLinks, checkTables];
+const CHECKS = [checkMetadata, checkTagging, checkAltText, checkHeadings, checkContrast, checkLinks, checkTables];
 const LEVELS = ['A','AA'];
 
 export function validateParsedDocument(doc) {
@@ -27,6 +27,7 @@ export function validateParsedDocument(doc) {
   if (!Array.isArray(doc.elements)) throw new EngineError('The parsed document must include an "elements" array.');
   if (doc.metadata !== undefined && doc.metadata !== null && (typeof doc.metadata !== 'object' || Array.isArray(doc.metadata))) throw new EngineError('"metadata" must be an object when provided.');
   const notExtracted = doc.metadata?.not_extracted;
+  if (doc.metadata?.tagged !== undefined && typeof doc.metadata.tagged !== 'boolean') throw new EngineError('"metadata.tagged" must be a boolean when provided.');
   if (notExtracted !== undefined && !(Array.isArray(notExtracted) && notExtracted.every(v=>typeof v === 'string'))) throw new EngineError('"metadata.not_extracted" must be an array of strings when provided.');
   doc.elements.forEach((el,i)=>{
     if (!el || typeof el !== 'object' || typeof el.type !== 'string') throw new EngineError(`Element ${i} must be an object with a string "type".`);

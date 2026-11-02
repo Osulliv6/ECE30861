@@ -106,7 +106,7 @@ test('tester records system errors, failed expectations, timeouts, and unsupport
   assert.deepEqual([byId['T-01'].outcome, byId['T-01'].source], ['error', 'communication']);
   assert.equal(byId['T-02'].outcome, 'pass');
   assert.deepEqual([byId['T-03'].outcome, byId['T-03'].source], ['error', 'system']);
-  for (const id of ['T-07', 'T-08', 'T-11']) assert.equal(byId[id].outcome, 'skip', id);
+  for (const id of ['T-07', 'T-08', 'T-11', 'T-15']) assert.equal(byId[id].outcome, 'skip', id);
   assert.match(report.coverage.code.basis, /HTTP 503/);
   assert.equal(report.coverage.code.covered, null);
 

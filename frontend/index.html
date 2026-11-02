@@ -40,6 +40,8 @@
             <select id="wcag-level" name="wcag_level"><option value="AA">AA</option><option value="A">A</option></select>
           </div>
           <button id="analyze-button" type="submit" class="button primary" disabled>Check accessibility</button>
+          <button id="repair-button" type="button" class="button secondary" disabled aria-describedby="repair-hint">Check and repair</button>
+          <p id="repair-hint" class="action-hint">Check and repair also fixes what can be fixed safely (language, title, heading levels, table headers, text colors) and gives you a repaired copy to download.</p>
           <button id="cancel-button" type="button" class="button secondary" hidden>Cancel check</button>
           <p id="action-hint" class="action-hint">Connect the analysis service to start a check.</p>
         </form>
@@ -47,6 +49,7 @@
         <details class="scope">
           <summary>Scope of analysis</summary>
           <p>The service evaluates its supported WCAG 2.1 checks. Results assist human review and do not certify full ADA or WCAG compliance.</p>
+          <p>Check and repair applies only mechanical fixes and lists each one. Alternative text, link wording, and PDF tags still need a person. Review the repaired copy before using it.</p>
           <p>Edit the original document yourself, then submit it again to recheck.</p>
         </details>
       </section>
@@ -79,6 +82,13 @@
             <span id="issue-count" hidden></span>
           </div>
           <p id="report-message" class="report-message" hidden></p>
+          <section id="repair" class="repair" aria-labelledby="repair-heading" hidden>
+            <h4 id="repair-heading">Automated repairs</h4>
+            <p id="repair-summary"></p>
+            <button id="download-repaired" class="button secondary" type="button">Download repaired document</button>
+            <ul id="repair-changes" class="repair-changes"></ul>
+            <h4 class="remaining-heading">Findings that remain</h4>
+          </section>
           <div id="filter-bar" class="filter-bar">
             <label for="severity-filter">Severity</label>
             <select id="severity-filter">

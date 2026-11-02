@@ -1,6 +1,6 @@
 # ECE 30861 Group ADA Project
 
-This is a runnable Phase 3 system: choose an HTML, PDF, DOCX, or plain-text document, submit it for accessibility analysis, and display the findings. The Node server validates the upload (size, type, and that the content really is that format), passes it to Prathum's Python parser (`accessibility-parser/`), runs the WCAG engine (`engine/`) on the parsed structure, and returns the shared JSON report. Each upload is written to a private temporary directory only for the parser run and is deleted afterwards, whether parsing succeeds or fails.
+This is a runnable Phase 4 system: choose an HTML, PDF, DOCX, or plain-text document, submit it for accessibility analysis, and display the findings. It can also repair the problems that have a safe automatic fix and return a repaired copy (see [Remediation](#remediation)). What changed in this phase is in [Phase 4 changes](#phase-4-changes). The Node server validates the upload (size, type, and that the content really is that format), passes it to Prathum's Python parser (`accessibility-parser/`), runs the WCAG engine (`engine/`) on the parsed structure, and returns the shared JSON report. Each upload is written to a private temporary directory only for the parser run and is deleted afterwards, whether parsing succeeds or fails.
 
 ## Testing our deployed service (for podmates)
 
@@ -22,12 +22,13 @@ Notes:
 | `GET https://ece30861-ada.onrender.com/health` | Health check | none | `200 {"status":"ok"}` |
 | `GET https://ece30861-ada.onrender.com/formats` | Supported formats and size limit | none | `200 {"supported_mime_types":[...],"max_file_size_mb":10}` |
 | `POST https://ece30861-ada.onrender.com/analyze` | Analyze one document | `multipart/form-data`: `file` (required), `wcag_level` = `A` or `AA` (optional, default `AA`) | `200 {"issues":[...]}` (plus a `message` when `issues` is empty) |
+| `POST https://ece30861-ada.onrender.com/remediate` | Repair a document (team extension, not in the shared pod contract) | As `/analyze`, plus optional `language` (BCP 47 tag) and `title` | `200 {"remediated_file":{...},"changes":[...],"issues_before":[...],"issues_after":[...],"message":"..."}` |
 | `POST https://ece30861-ada.onrender.com/test/setup` | Register a test session | JSON `{"session_id":"<unique id>","setup":{}}` | `201 {"session_id":"<same id>"}` |
 | `GET https://ece30861-ada.onrender.com/test/report?session_id=<id>` | Code coverage for a session | none | `200 {"session_id":"<id>","coverage":{"code":{"covered":null,"total":null,"basis":"..."}}}` |
 
 Supported formats are HTML, PDF, DOCX, and plain text, up to 10 MiB (10 × 1,048,576 bytes). The API field remains named `max_file_size_mb` for the shared interface.
 
-`/analyze` errors:
+`/analyze` and `/remediate` errors (`/remediate` also returns 400 `INVALID_LANGUAGE` and `INVALID_TITLE`):
 
 | Status | Code | When |
 | --- | --- | --- |
@@ -66,7 +67,7 @@ curl -X POST -H "Content-Type: application/json" -d '{"session_id":"<id from set
 curl "https://ece30861-ada.onrender.com/tester/test/report?session_id=<id from setup>"
 ```
 
-Our tester runs 13 tests (T-01 to T-13) against your `/health`, `/formats`, and `/analyze`, and returns one report with a pass, fail, error, or skip outcome per test, plus coverage. DOCX and PDF tests are skipped if your `/formats` doesn't list those formats. A run takes under a minute against an awake service. The full test list is in `testing/tester.mjs`, and the test documents are in `tests/fixtures/documents/`. OpenAPI descriptions are in `openapi/system.yaml` and `openapi/tester.yaml`. Implementation details are in [Cross-team testing interface](#cross-team-testing-interface).
+Our tester runs 15 tests (T-01 to T-15) against your `/health`, `/formats`, and `/analyze`, and returns one report with a pass, fail, error, or skip outcome per test, plus coverage. DOCX and PDF tests are skipped if your `/formats` doesn't list those formats. A run takes under a minute against an awake service. The full test list is in `testing/tester.mjs`, and the test documents are in `tests/fixtures/documents/`. OpenAPI descriptions are in `openapi/system.yaml` and `openapi/tester.yaml`. Implementation details are in [Cross-team testing interface](#cross-team-testing-interface).
 
 ## Run locally
 
@@ -155,7 +156,7 @@ The course's cross-team testing spec requires each team to deploy a **system** a
 | --- | --- |
 | System base URL | `https://ece30861-ada.onrender.com` |
 | Tester base URL | `https://ece30861-ada.onrender.com/tester` |
-| Access / run notes | No authentication. Maximum times: system setup 70 s (the free hosting plan can take up to 60 s to wake); tester setup 70 s (including target setup); tester run 15 minutes (13 target calls, each with a 60 s limit, plus coverage retrieval). |
+| Access / run notes | No authentication. Maximum times: system setup 70 s (the free hosting plan can take up to 60 s to wake); tester setup 70 s (including target setup); tester run 17 minutes (15 target calls, each with a 60 s limit, plus coverage retrieval). |
 
 **System** (`testing/system.mjs`):
 - `POST /test/setup` accepts `{"session_id":"…","setup":{}}` and returns 201 with the same ID. It returns 409 for a duplicate ID and 400 for an invalid body.
@@ -164,7 +165,7 @@ The course's cross-team testing spec requires each team to deploy a **system** a
 
 **Tester** (`testing/tester.mjs`):
 - `POST /tester/test/setup` with `{"target_url":"https://other-team.example/system"}` creates a session (UUID), calls the target's `/test/setup`, and returns 201 when the target is ready. It forwards the target's error status, message, and source.
-- `POST /tester/test/run` with `{"session_id":"…"}` runs tests T-01 to T-13 in order against the target's `/health`, `/formats`, and `/analyze`. It returns one report with a `pass`, `fail`, `error` (with `source`), or `skip` outcome per test, plus code, component, and system coverage.
+- `POST /tester/test/run` with `{"session_id":"…"}` runs tests T-01 to T-15 in order against the target's `/health`, `/formats`, and `/analyze`. It returns one report with a `pass`, `fail`, `error` (with `source`), or `skip` outcome per test, plus code, component, and system coverage.
 - `GET /tester/test/report?session_id=…` returns the stored report, or 409 before the suite ends.
 - A session runs only once. Running it again returns 409.
 
@@ -172,8 +173,9 @@ The suite checks:
 - health and formats
 - missing alt text (HTML and DOCX)
 - contrast at level AA, and its exclusion at level A
+- contrast from colors set in an embedded `<style>` sheet (T-14, added in Phase 4)
 - the no-issue report
-- PDF analysis
+- PDF analysis, and a figure without alt text in a tagged PDF (T-15, added in Phase 4)
 - expected errors: unsupported type (415), empty file (422), corrupt DOCX (422), missing file (400), and invalid `wcag_level` (400)
 
 DOCX and PDF tests are skipped when the target's `/formats` doesn't list that format.
@@ -193,7 +195,9 @@ Both services are described in `openapi/system.yaml` and `openapi/tester.yaml`. 
 - Download the current report as JSON. Downloads preserve the server report fields and add `frontend_context` identifying the document, level, and whether the report is a sample.
 - Use semantic HTML, native controls, keyboard focus indicators, a skip link, live announcements, dialog focus handling, responsive layout, and reduced-motion support.
 
-There is no automatic document editing, compliance score, account system, report history, or document preview. The backend owns parsing, WCAG detection, remediation generation, file integrity checking, and uploaded-file deletion. The frontend stores no uploads or reports in localStorage, cookies, or a database. Completed uploads are released from frontend state; current results exist only in page memory until replaced or the page closes. Downloading JSON is an explicit user action and creates a local copy.
+**Check and repair** sends the document to `POST /remediate` instead. The report then shows the automated repairs (each marked **Review** when the service chose a value or changed appearance), a button to download the repaired copy, and the findings that remain. The repaired file exists only in page memory until downloaded. A JSON download after a repair also includes the change list and the findings before repair.
+
+There is no compliance score, account system, report history, or document preview. The backend owns parsing, WCAG detection, remediation generation, file integrity checking, and uploaded-file deletion. The frontend stores no uploads or reports in localStorage, cookies, or a database. Completed uploads are released from frontend state; current results exist only in page memory until replaced or the page closes. Downloading JSON is an explicit user action and creates a local copy.
 
 ## Accessibility engine
 
@@ -214,12 +218,13 @@ const report = analyze(parsedDocument, { wcagLevel: 'AA' }); // {issues:[...]} o
 | | | Alt text is a file name or placeholder ("image", `IMG_0042.png`) | serious |
 | | | Alt text starts with "image of" / "picture of" | minor |
 | | | Alt text is longer than 150 characters | minor |
-| 1.3.1 Info and Relationships | A | Heading levels skip (H1 → H3) | moderate |
+| 1.3.1 Info and Relationships | A | PDF is not tagged (one document-level finding) | serious |
+| | | Heading levels skip (H1 → H3) | moderate |
 | | | First heading is not H1 | minor |
 | | | 1,500+ characters of text and no headings | moderate |
 | | | Large or bold standalone text that looks like an unmarked heading | moderate |
 | | | Data table has no header row or column | moderate |
-| 1.4.3 Contrast (Minimum) | AA | Below 4.5:1 for normal text or 3:1 for large text (18pt+, or 14pt+ bold) | serious if far below the threshold, otherwise moderate |
+| 1.4.3 Contrast (Minimum) | AA | Below 4.5:1 for normal text or 3:1 for large text (18pt+, or 14pt+ bold), including link text | serious if far below the threshold, otherwise moderate |
 | 2.4.2 Page Titled | A | Document title property is missing | moderate |
 | 2.4.4 Link Purpose | A | Link text is empty / generic ("click here", "read more") / a raw URL | serious / moderate / minor |
 | 2.4.6 Headings and Labels | AA | Heading is empty | serious |
@@ -231,7 +236,7 @@ With `wcagLevel: 'A'`, the report omits the AA criteria (1.4.3 and 2.4.6). Image
 
 The `elements` array is in reading order. Only `type` is required; the engine uses any other fields that are present. It ignores unknown element types and fields, so the parser can send more data than the engine uses.
 
-`metadata.not_extracted` lists things the parser could not observe for this format. The engine skips the matching checks so that "unknown" is never reported as "missing". The values are `alt_text`, `headings`, `tables`, `title`, and `language`. The parser sends `["alt_text","headings","tables"]` for PDF, because it does not read tagged-PDF semantics. For plain text it sends all five values, because plain text cannot contain any of these.
+`metadata.not_extracted` lists things the parser could not observe for this format. The engine skips the matching checks so that "unknown" is never reported as "missing". The values are `alt_text`, `headings`, `tables`, `title`, and `language`. For PDFs the parser also sends `metadata.tagged`. A tagged PDF has its headings, figures (with `/Alt` or `/ActualText`), and tables read from its structure tree, so nothing is listed as not extracted. An untagged PDF (`tagged: false`) lists `["alt_text","headings","tables"]`: those semantics do not exist for assistive technology, and the engine reports the missing tags once instead. For plain text it sends all five values, because plain text cannot contain any of these.
 
 ```json
 {
@@ -251,17 +256,60 @@ The `elements` array is in reading order. Only `type` is required; the engine us
 | `heading.level` | Required integer from 1 to 6 |
 | `image.alt` | `null` or missing means no alt text; `""` means decorative |
 | `text.standalone` | `true` when the text is its own paragraph or line; used to detect bold "fake headings" |
-| `color`, `background` | `#rgb`, `#rrggbb`, `rgb(r,g,b)`, `{r,g,b}`, or a basic CSS color name; allowed on any text-bearing element |
+| `color`, `background` | `#rgb`, `#rrggbb`, `rgb(r,g,b)`, `{r,g,b}`, or a basic CSS color name; allowed on any text-bearing element. For HTML the parser sends resolved hex values (see [Contrast from stylesheets](#contrast-from-stylesheets)) |
+| `contrast_unknown` | `true` when colors are set but cannot be evaluated (CSS variables, background images); no `color` is sent, so contrast is skipped |
+| `metadata.tagged` | PDF only: whether the PDF has a structure tree. `false` produces the "PDF is not tagged" finding |
 | `font_size_pt`, `bold` | Used to decide whether text is large for contrast purposes |
 | `table.layout` | `true` excludes layout-only tables from the header check |
 | `location` | Optional `{page, line, selector}`; invalid values are dropped. The engine adds a `snippet` from the element text |
+
+## Contrast from stylesheets
+
+`accessibility-parser/parser/css.py` resolves the CSS that decides what color text is drawn in, and on what background. It handles:
+
+- embedded `<style>` sheets and inline `style` attributes;
+- selector specificity, source order, and `!important`;
+- inheritance of `color`, `font-size`, and `font-weight`;
+- browser defaults for heading size and bold text;
+- `@media screen` and `@media all` blocks.
+
+The background behind text is the nearest ancestor's `background-color` (or the color in a `background` shorthand). Semi-transparent backgrounds and text colors are composited over what is below them. Hidden text (`display: none`, `visibility: hidden`, `hidden`) has no contrast requirement.
+
+These are skipped as unknown rather than guessed: colors from `var()`, backgrounds with images or gradients, conditional media queries, `:hover`/`:focus` states, and external stylesheets. The service never fetches URLs from uploaded documents, so it reports the number of external stylesheets in `metadata.external_stylesheets`.
+
+## Tagged PDFs
+
+`accessibility-parser/parser/pdf_tags.py` walks the PDF structure tree (`/StructTreeRoot`, ISO 32000-1 section 14.8) and applies the `/RoleMap`. Figures (and their `/Alt` or `/ActualText`) and tables (rows inside `THead`/`TBody`/`TFoot`, and `TH` versus `TD` cells) come directly from the tree, so a table that spans pages is counted once. Heading levels and text come from MuPDF's structured-text output, which maps page content to tags through the PDF's `/ParentTree`.
+
+If a tagged PDF has no usable ParentTree, heading checks are skipped (`not_extracted: ["headings"]`). Figures and tables are still checked. Cycles in the tree are ignored, and very large trees are capped at 50,000 elements. The fixture `tests/fixtures/documents/tagged.pdf` is generated by `make_fixtures.py`. It is written by hand because PyMuPDF cannot create tags.
+
+## Remediation
+
+`POST /remediate` takes the same upload as `/analyze`. It writes a repaired copy in the upload's private temporary directory, then parses that copy and runs the engine on it again. That means `issues_after` is exactly what `/analyze` reports for the repaired file; the repair code never judges its own work. Both temporary files are deleted afterwards.
+
+| Repair | WCAG | HTML | DOCX | PDF |
+| --- | --- | --- | --- | --- |
+| Set the document language (from `language`, default `en`) | 3.1.1 | yes | yes | yes |
+| Set the title (from `title`, else the first H1, heading, or line) | 2.4.2 | yes | yes | yes, with `DisplayDocTitle` |
+| Remove empty headings | 2.4.6 | yes | yes (to Normal text) | no |
+| Close gaps in heading levels; sibling headings stay siblings | 1.3.1 | yes | yes | no |
+| Mark the first row of a header-less data table as the header | 1.3.1 | yes (`<th scope="col">`) | yes (repeating header row) | no |
+| Change low-contrast text to the nearest color of the same hue that passes | 1.4.3 | yes (inline `color`) | yes (run color, against white) | no |
+
+Existing valid titles and languages are kept. These are never generated, because they need human judgment: alternative text, link wording, and tags for an untagged PDF. They stay in `issues_after` with their suggested fixes. Plain text is returned unchanged.
+
+Each change has `wcag_criterion`, `description`, `location` (the shared location shape), and `needs_review`. `needs_review` is `false` only for values the user supplied and for removing empty headings.
+
+The repaired file is returned as base64 in `remediated_file`, with a download name made from the upload name reduced to safe characters plus `-remediated`. Re-serializing HTML can change insignificant formatting, such as `<br>` becoming `<br/>`. Renaming a heading tag can change its default size; that change is marked for review.
 
 ## Known limitations
 
 - **Error-code detail:** Error bodies follow the Phase 2 `{code,message}` shape. The implementation also uses specific codes for malformed requests and parser timeouts; the pod should keep the code list aligned as the shared OpenAPI contract is refined.
 - **Coverage:** code coverage is reported as `null`, because line instrumentation isn't enabled in the deployed service. Component and system coverage are `null` until the pod's component and acceptance-criteria lists are added to `testing/pod-spec.json`.
-- **PDF analysis is partial:** alt text, headings, and tables in tagged PDFs aren't read, so those checks are skipped for PDFs instead of guessed. Scanned PDFs (images of text) aren't analyzed.
-- **Contrast:** only inline or run-level text and background colors are checked. External CSS and rendered backgrounds aren't evaluated, and missing backgrounds are assumed white.
+- **PDF analysis:** tagged PDFs are checked for heading order, figure alt text, and table headers from their tags. Other tag roles (lists, reading order compared with visual order, artifacts) aren't evaluated, and an untagged PDF gets one "not tagged" finding rather than per-element findings. Scanned PDFs (images of text) aren't analyzed, and PDF text contrast assumes a white background.
+- **Contrast:** HTML contrast covers embedded and inline CSS but not external stylesheets, `var()`, background images or gradients, conditional media queries, or interaction states (see [Contrast from stylesheets](#contrast-from-stylesheets)). DOCX contrast uses run colors against white; paragraph shading isn't read.
+- **Remediation** repairs only mechanical problems; alt text, link wording, and PDF tagging still need a person. PDF repair is limited to title and language. DOCX heading repair needs the document to define the target `Heading N` style. The repair endpoint isn't part of the shared pod contract, so podmates' testers don't exercise it.
+- **New tester cases T-14 and T-15** check stylesheet contrast and tagged-PDF alt text. These go beyond what a podmate's system may implement if the pod specification only requires inline styles and untagged PDFs.
 - **Locations:** DOCX locations are body element positions, not page numbers. HTML `line` values are element order, not source lines.
 - **Remediation guidance** is fixed text for each check. No AI-generated suggestions are included yet.
 - **Availability:** the free hosting plan sleeps after about 15 minutes idle, and the first request after that can take up to 60 seconds. Test sessions are kept in memory, so a restart or redeploy clears them.
@@ -275,9 +323,11 @@ npm test
 
 `tests/core.test.mjs` covers URL restrictions, discovered formats, file-type and size boundaries, complete/partial report validation, multipart field preservation, HTTP errors, pending responses, timeout, and cancellation. `tests/engine.test.mjs` covers each engine check, contrast math against WCAG reference values, A/AA filtering, rejection of invalid parser output, and that every engine report passes the frontend's `parseReport()`. `tests/backend.test.mjs` starts the actual local service on an ephemeral loopback port and verifies health, format discovery, CORS, UI serving, successful HTML analysis, WCAG-level filtering, and malformed/unsupported upload responses. `tests/integration.test.mjs` runs end to end through the Python parser. It uploads real DOCX, PDF, and TXT files from `tests/fixtures/documents/` and checks that each report contains the expected findings and passes `parseReport()`. It also covers MIME fallback by file extension, corrupt, encrypted, mismatched, and non-UTF-8 files (422), temp-file deletion, a missing or hung parser (503), oversized and malformed uploads, CORS preflight, and path-traversal attempts.
 
-`tests/test-interface.test.mjs` covers the cross-team testing endpoints. It checks system setup and report (201, 409, 400, 404); a full tester run against this system in which all 13 tests pass and the stored report stays unchanged; forwarding of target setup failures; unreachable targets (source `communication`); and per-test outcomes when a fake target times out, returns 500, sends an invalid report, or doesn't support DOCX or PDF.
+`tests/remediation.test.mjs` covers `POST /remediate` end to end for HTML, DOCX, PDF, and TXT. It checks which findings are repaired and which remain, that re-analyzing the returned file gives exactly `issues_after`, level A filtering, title sanitizing, every error response, and temp-file deletion. The PDF and stylesheet features are covered in `tests/integration.test.mjs` (the tagged and untagged fixtures, and contrast from a `<style>` sheet) and in the parser tests.
 
-Parser tests run separately: `cd accessibility-parser && .venv/bin/python -m pytest -q`. To regenerate the document fixtures, run `accessibility-parser/.venv/bin/python tests/fixtures/documents/make_fixtures.py`. GitHub Actions (`.github/workflows/test.yml`) runs both test suites on every push, then builds the Docker image and runs the smoke test against it.
+`tests/test-interface.test.mjs` covers the cross-team testing endpoints. It checks system setup and report (201, 409, 400, 404); a full tester run against this system in which all 15 tests pass and the stored report stays unchanged; forwarding of target setup failures; unreachable targets (source `communication`); and per-test outcomes when a fake target times out, returns 500, sends an invalid report, or doesn't support DOCX or PDF.
+
+Parser tests run separately: `cd accessibility-parser && .venv/bin/python -m pytest -q`. `tests/test_css.py` covers the CSS cascade, colors, and contrast fixes; `tests/test_parser.py` covers tagged PDFs, including a missing ParentTree, `/ActualText`, and a cyclic tree; `tests/test_remediate.py` covers each repair per format and the CLI. To regenerate the document fixtures, run `accessibility-parser/.venv/bin/python tests/fixtures/documents/make_fixtures.py`. GitHub Actions (`.github/workflows/test.yml`) runs both test suites on every push, then builds the Docker image and runs the smoke test against it.
 
 A deterministic local test service is supplied for UI integration checks:
 
@@ -298,7 +348,7 @@ Connect the preview to `http://127.0.0.1:3087`. **This is a test double, not an 
 | `empty.html` | Client rejects zero bytes |
 | `unsupported.exe` | Client rejects unsupported type |
 
-PDF analysis is partial: alt text, headings, and tables in tagged PDFs are not read, so those checks are skipped for PDFs instead of guessed. For HTML contrast checks, inline foreground colors can be inherited from ancestor elements; external stylesheets, computed styles, and rendered backgrounds are not evaluated. Other contrast checks use available inline or run-level colors. The UI itself has not been certified for WCAG conformance; keyboard support and visual checks are implementation evidence, not a full assistive-technology audit.
+The UI itself has not been certified for WCAG conformance; keyboard support and visual checks are implementation evidence, not a full assistive-technology audit.
 
 ## Files
 
@@ -310,12 +360,29 @@ PDF analysis is partial: alt text, headings, and tables in tagged PDFs are not r
 - `frontend/samples.js`: fixed demonstration reports
 - `engine/`: accessibility analysis / WCAG engine (`index.mjs` entry point, `checks.mjs` rules, `contrast.mjs` color math, `cli.mjs`)
 - `server.mjs`: API (upload validation, content-type checks, error mapping), CORS handling, and static UI server
-- `accessibility-parser/`: Prathum's Python document parser; `integration.mjs` is the Node bridge (temp file, timeout, cleanup)
+- `accessibility-parser/`: Prathum's Python document parser; `integration.mjs` is the Node bridge (temp file, timeout, cleanup). `parser/css.py` resolves stylesheets for contrast, `parser/pdf_tags.py` reads PDF structure trees, and `parser/remediate.py` repairs documents
 - `testing/`: cross-team testing interface (`system.mjs`, `tester.mjs` and its suite, `pod-spec.json` for coverage)
 - `openapi/`: OpenAPI 3.1 descriptions of the system and tester
 - `Dockerfile`, `scripts/smoke-test.sh`, `.github/workflows/test.yml`: deployment, post-deploy check, and CI
 - `tests/`: automated tests, synthetic fixtures, and test service
 - `UI_HANDOFF.md`: requirements mapping and engineering handoff
+
+## Phase 4 changes
+
+**New functionality**
+- **Remediation:** `POST /remediate` and the **Check and repair** button repair language, title, empty headings, heading gaps, table header rows, and text contrast. They return the repaired file with a list of changes and the findings before and after.
+- **Tagged PDFs:** heading order, figure alt text, and table headers are now checked from the PDF's tags. Untagged PDFs get a "not tagged" finding (1.3.1, serious).
+- **Contrast from stylesheets:** HTML contrast now follows embedded CSS, specificity, inheritance, and nested or semi-transparent backgrounds. Link text is now checked for contrast.
+
+**Interface changes**
+- `/analyze` responses keep the shared shape. They can include more findings than before: untagged-PDF and tagged-PDF structure findings, and stylesheet and link contrast findings.
+- `/remediate` is new.
+- The tester adds T-14 and T-15.
+- `openapi/system.yaml` documents `/remediate`, and the tester spec lists T-01 to T-15.
+
+**Tests:** 51 Node tests (37 before) and 52 parser tests (9 before). The smoke test also checks the tagged PDF, stylesheet contrast, and `/remediate`.
+
+**Still incomplete:** AI-generated alt text suggestions, PowerPoint and Excel formats, repairs inside PDFs beyond metadata, and component/system coverage (`testing/pod-spec.json` still needs the pod's lists).
 
 ## AI contribution
 

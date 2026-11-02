@@ -62,11 +62,36 @@ test('DOCX upload produces findings for missing alt text, skipped heading, link 
   assert.equal(report.issues[1].location.snippet, 'Picture 1');
 });
 
-test('PDF upload checks links but never reports unknown PDF alt text or headings as missing', async () => {
+test('untagged PDF gets one "not tagged" finding instead of guessed headings or alt text', async () => {
   const report = await (await upload(base, await fixture('course.pdf'), {type:'application/pdf', name:'course.pdf'})).json();
   assert.equal(parseReport(report), report);
-  assert.deepEqual(criteria(report), ['2.4.4']);
-  assert.deepEqual(report.issues[0].location, {page:1, snippet:'click here'});
+  assert.deepEqual(criteria(report), ['1.3.1','2.4.4']);
+  assert.equal(report.issues[0].location, null);
+  assert.match(report.issues[0].description, /not tagged/);
+  assert.deepEqual(report.issues[1].location, {page:1, snippet:'click here'});
+});
+
+test('tagged PDF is checked for heading order, figure alt text, and table headers from its tags', async () => {
+  const report = await (await upload(base, await fixture('tagged.pdf'), {type:'application/pdf', name:'tagged.pdf'})).json();
+  assert.equal(parseReport(report), report);
+  assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location?.page, i.location?.snippet]), [
+    ['1.1.1', 1, 'Figure 1'],  // Figure without /Alt; Figure 2 has /Alt and is not reported
+    ['1.3.1', 1, 'Grading'],   // H1 -> H3
+    ['1.3.1', 2, 'Table'],     // page-2 table has no TH cells; page-1 table header is in THead
+  ]);
+  assert.ok(!report.issues.some(i => /not tagged/.test(i.description)));
+});
+
+test('HTML contrast uses colors and backgrounds from embedded stylesheets', async () => {
+  const html = `<!doctype html><html lang="en"><head><title>Test</title><style>
+    .muted { color: #999999 } .panel { background: #333333 } .panel p { color: #777777 }
+    #ok p.muted { color: #222222 } .hero { background: url(hero.png) #000 }</style></head><body>
+    <p class="muted">Muted note</p><div class="panel"><p>Dark panel</p></div><div id="ok"><p class="muted">Fine</p></div>
+    <div class="hero"><p style="color:#fff">On image</p></div></body></html>`;
+  const report = await (await upload(base, html, {type:'text/html', name:'styles.html'})).json();
+  assert.equal(parseReport(report), report);
+  const contrast = report.issues.filter(i => i.wcag_criterion === '1.4.3').map(i => i.location.snippet);
+  assert.deepEqual(contrast, ['Muted note', 'Dark panel']);  // the override and the image background are not reported
 });
 
 test('plain text has no title or language to be missing, so a clean file gets the no-issue report', async () => {

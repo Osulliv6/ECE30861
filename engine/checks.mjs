@@ -185,6 +185,18 @@ export function checkTables(doc) {
   return out;
 }
 
+// ---- 1.3.1 Untagged PDF -----------------------------------------------------------------
+
+// An untagged PDF exposes no headings, lists, tables, reading order, or image descriptions
+// to assistive technology. The parser marks it with metadata.tagged === false; the
+// structure checks that depend on tags are skipped, so this single finding replaces them.
+export function checkTagging(doc) {
+  if (doc.metadata?.tagged !== false) return [];
+  return [finding('1.3.1','serious',null,'',
+    'The PDF is not tagged, so its headings, tables, reading order, and image descriptions are not available to assistive technology.',
+    'Recreate the PDF from its source document with accessibility tags turned on (for example, in Word use Save As PDF with “Document structure tags for accessibility” selected), or add tags with a PDF remediation tool. Then give each informative image alternative text.')];
+}
+
 // ---- 2.4.2 Page titled / 3.1.1 Language of page -----------------------------------------
 
 export function checkMetadata(doc) {

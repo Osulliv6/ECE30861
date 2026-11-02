@@ -60,7 +60,7 @@ def course_docx():
 
 
 def course_pdf():
-    """Expected AA findings: 2.4.4 'click here' only. Image alt text is not extracted from PDFs."""
+    """Untagged. Expected AA findings: 1.3.1 untagged PDF, 2.4.4 'click here'."""
     doc = fitz.open()
     page = doc.new_page()
     page.insert_text((72, 72), 'ECE 30861 Syllabus', fontsize=12)
@@ -73,6 +73,76 @@ def course_pdf():
     doc.close()
 
 
+def _write_pdf(path, objects):
+    """Writes numbered PDF objects (object 1 is the catalog) with a valid cross-reference table."""
+    out = bytearray(b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n')
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += f'{number} 0 obj\n'.encode() + body + b'\nendobj\n'
+    xref = len(out)
+    out += f'xref\n0 {len(objects) + 1}\n0000000000 65535 f \n'.encode()
+    out += b''.join(f'{o:010d} 00000 n \n'.encode() for o in offsets)
+    out += f'trailer\n<< /Size {len(objects) + 1} /Root 1 0 R /Info {len(objects)} 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+    path.write_bytes(bytes(out))
+
+
+def _stream(content, extra=b''):
+    return b'<< /Length %d %s>>\nstream\n' % (len(content), extra) + content + b'\nendstream'
+
+
+def tagged_pdf():
+    """A tagged two-page PDF, written by hand because PyMuPDF cannot create tags.
+
+    Expected AA findings: 1.3.1 heading skip (H1 -> H3), 1.1.1 Figure 1 without /Alt,
+    1.3.1 the page-2 table has no TH cells. Figure 2 has /Alt; table 1 has a THead row.
+    The H1 uses a custom role, "Title1", mapped to H1 through the /RoleMap.
+    """
+    page1 = b"""/Title1 <</MCID 0>> BDC BT /F1 24 Tf 72 720 Td (Course Syllabus) Tj ET EMC
+/H3 <</MCID 1>> BDC BT /F1 16 Tf 72 690 Td (Grading) Tj ET EMC
+/P <</MCID 2>> BDC BT /F1 12 Tf 72 670 Td (Exams count for most of the grade.) Tj ET EMC
+/Figure <</MCID 3>> BDC q 50 0 0 50 72 600 cm /Im1 Do Q EMC
+/TH <</MCID 4>> BDC BT /F1 12 Tf 72 560 Td (Item) Tj ET EMC
+/TD <</MCID 5>> BDC BT /F1 12 Tf 72 540 Td (Exams) Tj ET EMC"""
+    page2 = b"""/Figure <</MCID 0>> BDC q 50 0 0 50 72 700 cm /Im1 Do Q EMC
+/TD <</MCID 1>> BDC BT /F1 12 Tf 72 640 Td (Week) Tj ET EMC
+/TD <</MCID 2>> BDC BT /F1 12 Tf 72 620 Td (One) Tj ET EMC"""
+    resources = b'/Resources << /Font << /F1 5 0 R >> /XObject << /Im1 6 0 R >> >>'
+    objects = [
+        b'<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 9 0 R /Lang (en-US) >>',
+        b'<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R ' + resources + b' /StructParents 0 >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R ' + resources + b' /StructParents 1 >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        _stream(b'\xc8' * 12, b'/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 '),
+        _stream(page1),
+        _stream(page2),
+        # 9: StructTreeRoot. ParentTree maps each page's MCIDs to their structure elements.
+        b'<< /Type /StructTreeRoot /K [10 0 R] /RoleMap << /Title1 /H1 >> '
+        b'/ParentTree << /Nums [0 [11 0 R 12 0 R 13 0 R 14 0 R 18 0 R 19 0 R] 1 [20 0 R 22 0 R 23 0 R]] >> >>',
+        b'<< /Type /StructElem /S /Document /P 9 0 R /K [11 0 R 12 0 R 13 0 R 14 0 R 15 0 R 20 0 R 21 0 R] >>',
+        b'<< /Type /StructElem /S /Title1 /P 10 0 R /Pg 3 0 R /K 0 >>',
+        b'<< /Type /StructElem /S /H3 /P 10 0 R /Pg 3 0 R /K 1 >>',
+        b'<< /Type /StructElem /S /P /P 10 0 R /Pg 3 0 R /K 2 >>',
+        b'<< /Type /StructElem /S /Figure /P 10 0 R /Pg 3 0 R /K 3 >>',
+        b'<< /Type /StructElem /S /Table /P 10 0 R /K [16 0 R 17 0 R] >>',
+        b'<< /Type /StructElem /S /THead /P 15 0 R /K [24 0 R] >>',
+        b'<< /Type /StructElem /S /TBody /P 15 0 R /K [25 0 R] >>',
+        b'<< /Type /StructElem /S /TH /P 24 0 R /Pg 3 0 R /K 4 >>',
+        b'<< /Type /StructElem /S /TD /P 25 0 R /Pg 3 0 R /K 5 >>',
+        b'<< /Type /StructElem /S /Figure /P 10 0 R /Pg 4 0 R /K 0 /Alt (Bar chart of the grade distribution) >>',
+        b'<< /Type /StructElem /S /Table /P 10 0 R /K [26 0 R 27 0 R] >>',
+        b'<< /Type /StructElem /S /TD /P 26 0 R /Pg 4 0 R /K 1 >>',
+        b'<< /Type /StructElem /S /TD /P 27 0 R /Pg 4 0 R /K 2 >>',
+        b'<< /Type /StructElem /S /TR /P 16 0 R /K [18 0 R] >>',
+        b'<< /Type /StructElem /S /TR /P 17 0 R /K [19 0 R] >>',
+        b'<< /Type /StructElem /S /TR /P 21 0 R /K [22 0 R] >>',
+        b'<< /Type /StructElem /S /TR /P 21 0 R /K [23 0 R] >>',
+        b'<< /Title (ECE 30861 Syllabus) >>',
+    ]
+    _write_pdf(OUT / 'tagged.pdf', objects)
+
+
 def encrypted_pdf():
     doc = fitz.open()
     doc.new_page().insert_text((72, 72), 'Secret', fontsize=12)
@@ -83,6 +153,7 @@ def encrypted_pdf():
 if __name__ == '__main__':
     course_docx()
     course_pdf()
+    tagged_pdf()
     encrypted_pdf()
     (OUT / 'corrupt.docx').write_bytes(b'PK\x03\x04' + b'\x00not a real zip archive' * 4)
     (OUT / 'notes.txt').write_text('Week 1 notes\nRead chapter one before lab.\n')

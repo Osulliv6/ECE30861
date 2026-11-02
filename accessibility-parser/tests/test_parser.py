@@ -82,6 +82,7 @@ def test_docx_images_links_language_and_header_rows(tmp_path):
 
 def test_unextractable_semantics_are_declared_for_the_engine():
     pdf=parse_document(FIXTURES/'course.pdf')
+    assert pdf['metadata']['tagged'] is False
     assert pdf['metadata']['not_extracted']==['alt_text','headings','tables']
     assert pdf['metadata']['language']=='en-US'
     txt=parse_document(FIXTURES/'notes.txt')
@@ -99,3 +100,51 @@ def test_cli_stdout_is_only_json():
     for name in ['course.pdf','corrupt.docx']:
         out=subprocess.run([sys.executable,'-m','parser.cli',str(FIXTURES/name)],cwd=root,capture_output=True,text=True).stdout
         json.loads(out)  # A library warning on stdout would make this fail.
+
+
+# ---- Tagged PDF ------------------------------------------------------------------------------
+
+def test_tagged_pdf_headings_figures_and_tables_come_from_the_tags():
+    parsed=parse_document(FIXTURES/'tagged.pdf')
+    meta=parsed['metadata']
+    assert meta['tagged'] is True and 'not_extracted' not in meta
+    headings=[(e['level'],e['text'],e['location']['page']) for e in parsed['elements'] if e['type']=='heading']
+    assert headings==[(1,'Course Syllabus',1),(3,'Grading',1)]  # H1 via the /RoleMap entry Title1 -> H1
+    images=[(e['alt'],e['location']['page']) for e in parsed['elements'] if e['type']=='image']
+    assert images==[(None,1),('Bar chart of the grade distribution',2)]
+    tables=[(e['rows'],e['has_header_row'],e['location']['page']) for e in parsed['elements'] if e['type']=='table']
+    assert tables==[(2,True,1),(2,False,2)]  # header row inside THead; second table has only TD cells
+    # Heading text is not also reported as body text (no duplicate "fake heading" candidates).
+    assert not any(e['type']=='text' and e['text'] in ('Course Syllabus','Grading') for e in parsed['elements'])
+
+
+def test_tagged_pdf_without_parent_tree_does_not_claim_headings_are_missing(tmp_path):
+    import pymupdf as fitz
+    doc=fitz.open(FIXTURES/'tagged.pdf')
+    root=int(doc.xref_get_key(doc.pdf_catalog(),'StructTreeRoot')[1].split()[0])
+    doc.xref_set_key(root,'ParentTree','null')
+    path=tmp_path/'no-parent-tree.pdf'; doc.save(path); doc.close()
+    parsed=parse_document(path)
+    assert parsed['metadata']['tagged'] is True
+    assert parsed['metadata']['not_extracted']==['headings']
+    # Figures and tables come from the tag tree itself, so they are still read.
+    assert [e['alt'] for e in parsed['elements'] if e['type']=='image']==[None,'Bar chart of the grade distribution']
+
+
+def test_figure_actual_text_counts_as_a_text_alternative(tmp_path):
+    import pymupdf as fitz
+    doc=fitz.open(FIXTURES/'tagged.pdf')
+    figure=next(x for x in range(1,doc.xref_length()) if doc.xref_get_key(x,'S')==('name','/Figure') and doc.xref_get_key(x,'Alt')[0]=='null')
+    doc.xref_set_key(figure,'ActualText',fitz.get_pdf_str('Photo of the lab bench'))
+    path=tmp_path/'actual-text.pdf'; doc.save(path); doc.close()
+    assert [e['alt'] for e in parse_document(path)['elements'] if e['type']=='image'][0]=='Photo of the lab bench'
+
+
+def test_structure_tree_cycles_do_not_hang(tmp_path):
+    import pymupdf as fitz
+    doc=fitz.open(FIXTURES/'tagged.pdf')
+    root=int(doc.xref_get_key(doc.pdf_catalog(),'StructTreeRoot')[1].split()[0])
+    top=int(doc.xref_get_key(root,'K')[1].strip('[]').split()[0])
+    doc.xref_set_key(top,'K',f'[{top} 0 R]')  # the Document element contains itself
+    path=tmp_path/'cycle.pdf'; doc.save(path); doc.close()
+    assert parse_document(path)['metadata']['tagged'] is True

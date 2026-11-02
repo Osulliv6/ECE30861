@@ -70,7 +70,7 @@ function expectProjectError(response, status) {
 const unsupported = (ctx, type) => ctx.formats && !ctx.formats.includes(type) ? skip(`Target does not list ${type} in /formats.`) : null;
 
 const fixture = name => readFileSync(new URL(name, FIXTURES));
-const html = body => Buffer.from(`<!doctype html><html lang="en"><head><title>Course page</title></head><body>${body}</body></html>`);
+const html = (body, head = '') => Buffer.from(`<!doctype html><html lang="en"><head><title>Course page</title>${head}</head><body>${body}</body></html>`);
 
 export const SUITE = [
   {id:'T-01', name:'Health check reports ok', run:async (api) => {
@@ -107,6 +107,12 @@ export const SUITE = [
     expectProjectError(await api.analyze({file:false}), 400)},
   {id:'T-13', name:'Invalid wcag_level returns 400', run:async (api) =>
     expectProjectError(await api.analyze({bytes:html('<h1>Course</h1>'), type:'text/html', name:'level.html', level:'AAA'}), 400)},
+  // WCAG 1.4.3 applies to rendered colors, wherever they are declared; most real pages set colors in a stylesheet.
+  {id:'T-14', name:'Low-contrast color set in an embedded stylesheet is reported under 1.4.3', run:async (api) =>
+    expectReport(await api.analyze({bytes:html('<h1>Course</h1><p class="note">Due Friday at noon.</p>', '<style>.note { color: #949494; }</style>'), type:'text/html', name:'stylesheet-contrast.html', level:'AA'}), {includes:['1.4.3']})},
+  // A tagged PDF declares figures in its structure tree; a Figure with no /Alt has no text alternative.
+  {id:'T-15', name:'Tagged PDF figure without alt text is reported under 1.1.1', run:async (api, ctx) =>
+    unsupported(ctx, 'application/pdf') ?? expectReport(await api.analyze({bytes:fixture('tagged.pdf'), type:'application/pdf', name:'tagged.pdf'}), {includes:['1.1.1']})},
 ];
 
 // Component and system coverage count pod-defined items exercised by at least one executed test.
