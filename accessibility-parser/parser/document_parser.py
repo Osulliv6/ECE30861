@@ -314,6 +314,49 @@ def _pdf_tagged_page(blocks, page_index, elements, stats):
         elif b.get('type')==0:
             _pdf_text_lines(b, page_index, elements)
 
+def _pdf_tagged_fallback(doc, page, page_index, structure, elements, stats):
+    """Keep tagged text when MuPDF cannot expose its collected structure blocks.
+
+    Some tagged PDFs have a valid ParentTree but PyMuPDF's structure collector returns
+    no blocks. In that case, align text-bearing marked-content sequences in the page
+    stream with MuPDF's ordinary text blocks, then use the PDF structure tree's roles.
+    We only claim headings when every extracted text block maps unambiguously.
+    """
+    import re
+    plain = page.get_text('dict', sort=False)['blocks']
+    text_blocks = [b for b in plain if b.get('type') == 0]
+    mcids = []
+    pattern = re.compile(rb'/[^\s/<>()\[\]]+\s*<<\s*/MCID\s+(\d+)[^>]*>>\s*BDC(.*?)EMC', re.S)
+    for stream_xref in page.get_contents():
+        content = doc.xref_stream(stream_xref) or b''
+        for match in pattern.finditer(content):
+            if re.search(rb'\bBT\b', match.group(2)):
+                mcids.append(int(match.group(1)))
+    if len(mcids) != len(text_blocks):
+        # Plain text remains useful, but don't assign tag semantics by guesswork.
+        for block in plain:
+            if block.get('type') == 0:
+                _pdf_text_lines(block, page_index, elements)
+        return False
+    roles = structure.get('marked_content', {})
+    for block, mcid in zip(text_blocks, mcids):
+        role = roles.get((page_index, mcid))
+        if role in HEADING_ROLES:
+            text = _clean(' '.join(span.get('text', '') for line in block.get('lines', [])
+                                    for span in line.get('spans', [])))
+            if text:
+                item = {'type':'heading', 'level':HEADING_ROLES[role], 'text':text,
+                        'location':{'page':page_index}}
+                first = next((span for line in block.get('lines', []) for span in line.get('spans', [])
+                              if span.get('text', '').strip()), None)
+                if first:
+                    item.update(_pdf_span_style(first))
+                _add(elements, item)
+        else:
+            _pdf_text_lines(block, page_index, elements)
+    stats['structure_blocks'] += len(mcids)
+    return True
+
 def _pdf(path):
     import pymupdf as fitz
     doc=fitz.open(path)
@@ -329,7 +372,10 @@ def _pdf(path):
     for page_index,page in enumerate(doc,1):
         if tagged:
             blocks=page.get_text('dict',flags=fitz.TEXTFLAGS_DICT|fitz.TEXT_COLLECT_STRUCTURE)['blocks']
-            _pdf_tagged_page(blocks, page_index, elements, stats)
+            if blocks:
+                _pdf_tagged_page(blocks, page_index, elements, stats)
+            else:
+                _pdf_tagged_fallback(doc, page, page_index, structure, elements, stats)
             for number,figure in enumerate(structure['figures'],1):
                 if figure['page']==page_index:
                     _add(elements,{'type':'image','alt':figure['alt'],'decorative':False,'src':f'Figure {number}',
