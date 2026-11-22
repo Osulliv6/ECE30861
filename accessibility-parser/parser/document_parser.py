@@ -7,6 +7,7 @@ import html
 import io
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ SUPPORTED_MIME_TYPES = [
 ]
 EXTENSIONS = {'.docx': SUPPORTED_MIME_TYPES[0], '.pdf': SUPPORTED_MIME_TYPES[1],
               '.html': 'text/html', '.htm': 'text/html', '.txt': 'text/plain'}
+MAX_HTML_ELEMENTS = 100_000
 
 class ParseError(Exception):
     def __init__(self, code: str, message: str):
@@ -27,6 +29,23 @@ class ParseError(Exception):
 
 def _clean(s):
     return re.sub(r'\s+', ' ', s or '').strip()
+
+def _check_html_complexity(raw: str):
+    """Reject pathological DOMs before allocating a full BeautifulSoup tree."""
+    class Counter(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.count = 0
+
+        def handle_starttag(self, tag, attrs):
+            self.count += 1
+            if self.count > MAX_HTML_ELEMENTS:
+                raise ParseError('UNPROCESSABLE_FILE', 'HTML document exceeds the supported element limit.')
+
+        def handle_startendtag(self, tag, attrs):
+            self.handle_starttag(tag, attrs)
+
+    Counter().feed(raw)
 
 def _add(elements, item):
     elements.append(item)
@@ -168,6 +187,7 @@ def _docx(path):
 def _html(path):
     from bs4 import BeautifulSoup, NavigableString, Tag
     raw=Path(path).read_text(encoding='utf-8-sig')
+    _check_html_complexity(raw)
     soup=BeautifulSoup(raw, 'html.parser')
     title = _clean(soup.title.get_text(' ',strip=True)) if soup.title else ''
     metadata={'title':title,'language':soup.html.get('lang') if soup.html else None,'format':'html'}

@@ -21,10 +21,10 @@ const error = (source, message) => ({outcome:'error', source, message});
 const brief = body => { const text = typeof body === 'string' ? body : JSON.stringify(body); return text.length > 200 ? `${text.slice(0, 199)}…` : text; };
 
 function client(baseUrl, timeoutMs) {
-  async function request(method, path, body) {
+  async function request(method, path, body, requestTimeoutMs = timeoutMs) {
     let response;
-    try { response = await fetch(baseUrl + path, {method, body, signal:AbortSignal.timeout(timeoutMs), redirect:'error'}); }
-    catch (cause) { throw new CommunicationError(cause.name === 'TimeoutError' ? `${method} ${path} timed out after ${timeoutMs / 1000} s with no response.` : `${method} ${path} failed: ${cause.message}.`); }
+    try { response = await fetch(baseUrl + path, {method, body, signal:AbortSignal.timeout(requestTimeoutMs), redirect:'error'}); }
+    catch (cause) { throw new CommunicationError(cause.name === 'TimeoutError' ? `${method} ${path} timed out after ${requestTimeoutMs / 1000} s with no response.` : `${method} ${path} failed: ${cause.message}.`); }
     const text = await response.text();
     let parsed = text;
     try { parsed = JSON.parse(text); } catch { /* keep text for the message */ }
@@ -32,11 +32,11 @@ function client(baseUrl, timeoutMs) {
   }
   return {
     get: path => request('GET', path),
-    analyze({bytes, type, name, level = 'AA', file = true}) {
+    analyze({bytes, type, name, level = 'AA', file = true, timeoutMs:requestTimeoutMs = timeoutMs}) {
       const form = new FormData();
       if (file) form.append('file', new Blob([bytes], {type}), name);
       form.append('wcag_level', level);
-      return request('POST', '/analyze', form);
+      return request('POST', '/analyze', form, requestTimeoutMs);
     },
   };
 }
@@ -71,6 +71,15 @@ const unsupported = (ctx, type) => ctx.formats && !ctx.formats.includes(type) ? 
 
 const fixture = name => readFileSync(new URL(name, FIXTURES));
 const html = (body, head = '') => Buffer.from(`<!doctype html><html lang="en"><head><title>Course page</title>${head}</head><body>${body}</body></html>`);
+let largeHtmlFixture;
+function largeHtml() {
+  if (!largeHtmlFixture) {
+    const size = 10 * 1024 * 1024, element = '<i></i>', count = 1_300_000;
+    const prefix = '<!doctype html><html lang="en"><head><title>Stress test</title></head><body>', suffix = '</body></html>';
+    largeHtmlFixture = Buffer.from(prefix + element.repeat(count) + ' '.repeat(size - prefix.length - element.length * count - suffix.length) + suffix);
+  }
+  return largeHtmlFixture;
+}
 
 export const SUITE = [
   {id:'T-01', name:'Health check reports ok', run:async (api) => {
@@ -113,6 +122,25 @@ export const SUITE = [
   // A tagged PDF declares figures in its structure tree; a Figure with no /Alt has no text alternative.
   {id:'T-15', name:'Tagged PDF figure without alt text is reported under 1.1.1', run:async (api, ctx) =>
     unsupported(ctx, 'application/pdf') ?? expectReport(await api.analyze({bytes:fixture('tagged.pdf'), type:'application/pdf', name:'tagged.pdf'}), {includes:['1.1.1']})},
+  {id:'T-16', name:'10 MiB HTML with 1.3 million elements returns a report or 422 within 30 seconds', run:async api => {
+    const started = performance.now();
+    let response;
+    try {
+      response = await api.analyze({bytes:largeHtml(), type:'text/html', name:'large.html', timeoutMs:30_000});
+    } catch (e) {
+      return error('system', `Large HTML request did not receive a response within 30 seconds: ${e.message}`);
+    }
+    const durationMs = Math.round(performance.now() - started);
+    if (response.status === 422) {
+      const result = expectProjectError(response, 422);
+      return result.outcome === 'pass' ? pass(`${result.message} Completed in ${durationMs} ms.`) : result;
+    }
+    if (response.status === 200) {
+      const result = expectReport(response);
+      return result.outcome === 'pass' ? pass(`${result.message} Completed in ${durationMs} ms.`) : result;
+    }
+    return unexpected(response, 'HTTP 200 with a report or HTTP 422 for the complexity limit, within 30 seconds');
+  }},
 ];
 
 // Component and system coverage count pod-defined items exercised by at least one executed test.

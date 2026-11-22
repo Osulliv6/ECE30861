@@ -90,6 +90,21 @@ test('tagged PDF is checked for heading order, figure alt text, and table header
   assert.ok(!report.issues.some(i => /not tagged/.test(i.description)));
 });
 
+test('a 10 MiB HTML file with 1.3 million elements is rejected quickly instead of timing out', async () => {
+  const prefix = '<!doctype html><html lang="en"><head><title>Stress test</title></head><body>';
+  const suffix = '</body></html>';
+  const element = '<i></i>';
+  const size = 10 * 1024 * 1024;
+  const bytes = Buffer.from(prefix + element.repeat(1_300_000) + ' '.repeat(size - prefix.length - element.length * 1_300_000 - suffix.length) + suffix);
+  assert.equal(bytes.length, size);
+  const started = performance.now();
+  const response = await upload(base, bytes, {type:'text/html', name:'large.html'});
+  const durationMs = performance.now() - started;
+  assert.equal(response.status, 422);
+  assert.equal((await response.json()).code, 'UNPROCESSABLE_FILE');
+  assert.ok(durationMs < 30_000, `response took ${Math.round(durationMs)} ms`);
+});
+
 test('HTML contrast uses colors and backgrounds from embedded stylesheets', async () => {
   const html = `<!doctype html><html lang="en"><head><title>Test</title><style>
     .muted { color: #999999 } .panel { background: #333333 } .panel p { color: #777777 }
