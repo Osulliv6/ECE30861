@@ -70,6 +70,16 @@ test('HTML contrast checks nested spans using their own styles', async () => {
   assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location.snippet]), [['1.4.3', 'Faint text']]);
 });
 
+test('HTML reports unlabeled form controls but accepts associated and ARIA labels', async () => {
+  const html = `<!doctype html><html lang="en"><head><title>Contact</title></head><body>
+    <label for="email">Email</label><input id="email" type="email">
+    <span id="query-label">Search</span><input aria-labelledby="query-label">
+    <input id="unlabeled" type="text" placeholder="Your name">
+  </body></html>`;
+  const report = await (await upload(base, html, {type:'text/html', name:'form-labels.html'})).json();
+  assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location?.selector]), [['3.3.2','#unlabeled']]);
+});
+
 test('untagged PDF gets one "not tagged" finding instead of guessed headings or alt text', async () => {
   const report = await (await upload(base, await fixture('course.pdf'), {type:'application/pdf', name:'course.pdf'})).json();
   assert.equal(parseReport(report), report);

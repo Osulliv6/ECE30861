@@ -103,7 +103,18 @@ def test_large_text_only_needs_three_to_one(tmp_path):
 
 def test_docx_repairs_heading_levels_header_row_language_title_and_colors(tmp_path):
     from docx.shared import RGBColor
+    from docx.oxml.ns import qn
     doc = Document()
+    # Remove python-docx's built-in en-US document default so this fixture
+    # represents a file that truly has no default language set.
+    defaults = doc.styles.element.find(qn('w:docDefaults'))
+    run_default = defaults.find(qn('w:rPrDefault')) if defaults is not None else None
+    run_props = run_default.find(qn('w:rPr')) if run_default is not None else None
+    default_lang = run_props.find(qn('w:lang')) if run_props is not None else None
+    if default_lang is not None: run_props.remove(default_lang)
+    normal = doc.styles['Normal'].element
+    normal_lang = normal.rPr.find(qn('w:lang')) if normal.rPr is not None else None
+    if normal_lang is not None: normal.rPr.remove(normal_lang)
     doc.add_heading('Syllabus', level=1)
     doc.add_heading('Grading', level=3)
     doc.add_heading('', level=2)

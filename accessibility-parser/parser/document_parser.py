@@ -140,10 +140,18 @@ def _docx(path):
     props = doc.core_properties
     metadata = {'title': _clean(props.title), 'language':None,
                 'author':_clean(props.author), 'format':'docx'}
-    # w:lang on default style is more authoritative than guessing from text.
+    # Resolve the document's default language without guessing from its prose.
+    # A language on Normal overrides the document-wide default; Word stores
+    # that default in styles.xml/docDefaults when it is not repeated on Normal.
     style = doc.styles['Normal']
     lang = style.element.rPr.find(qn('w:lang')) if style.element.rPr is not None else None
     if lang is not None: metadata['language'] = lang.get(qn('w:val'))
+    if not metadata['language']:
+        defaults = doc.styles.element.find(qn('w:docDefaults'))
+        run_default = defaults.find(qn('w:rPrDefault')) if defaults is not None else None
+        run_props = run_default.find(qn('w:rPr')) if run_default is not None else None
+        lang = run_props.find(qn('w:lang')) if run_props is not None else None
+        if lang is not None: metadata['language'] = lang.get(qn('w:val'))
     elements = []
     for index, child in enumerate(doc.element.body.iterchildren(),1):
         location={'line':index}
@@ -204,6 +212,28 @@ def _html(path):
         return out
     separate = {'a','img','table','p','li','blockquote','pre','figcaption',
                 'h1','h2','h3','h4','h5','h6'}
+    ids = {str(node.get('id')):node for node in soup.find_all(id=True)}
+    def form_control_label(node):
+        aria = _clean(node.get('aria-label'))
+        if aria: return aria
+        referenced = []
+        for ident in str(node.get('aria-labelledby') or '').split():
+            target = ids.get(ident)
+            if target:
+                text = _clean(target.get_text(' ', strip=True))
+                if text: referenced.append(text)
+        if referenced: return ' '.join(referenced)
+        ident = node.get('id')
+        if ident:
+            label = soup.find('label', attrs={'for':str(ident)})
+            if label:
+                text = _clean(label.get_text(' ', strip=True))
+                if text: return text
+        wrapping = node.find_parent('label')
+        if wrapping:
+            text = _clean(wrapping.get_text(' ', strip=True))
+            if text: return text
+        return ''
     def text_runs(tag):
         # Resolve formatting at the text node's own parent, not at its paragraph.
         runs = []
@@ -247,6 +277,13 @@ def _html(path):
                 alt=node.get('alt') if node.has_attr('alt') else None
                 _add(elements,{'type':'image','alt':alt,'decorative':alt=='',
                                'src':node.get('src'),'location':loc(node)})
+            elif name in ('input','select','textarea'):
+                input_type = str(node.get('type') or 'text').lower() if name == 'input' else name
+                if name != 'input' or input_type not in ('hidden','submit','reset','button','image'):
+                    label = form_control_label(node)
+                    _add(elements,{'type':'form_control','control_type':input_type,
+                                   'labelled':bool(label),'text':label or input_type,
+                                   'location':loc(node)})
             elif name=='a':
                 item={'type':'link','text':_clean(node.get_text(' ',strip=True)),
                       'href':node.get('href'),'location':loc(node)}

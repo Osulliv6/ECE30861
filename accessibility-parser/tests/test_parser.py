@@ -80,6 +80,40 @@ def test_docx_images_links_language_and_header_rows(tmp_path):
     p=tmp_path/'header.docx'; d.save(p)
     assert next(e for e in parse_document(p)['elements'] if e['type']=='table')['has_header_row'] is True
 
+def test_docx_uses_document_default_language_when_normal_style_has_none(tmp_path):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    d = Document()
+    d.core_properties.language = 'fr-FR'
+    defaults = d.styles.element.find(qn('w:docDefaults'))
+    if defaults is None:
+        defaults = OxmlElement('w:docDefaults'); d.styles.element.insert(0, defaults)
+    run_default = defaults.find(qn('w:rPrDefault'))
+    if run_default is None:
+        run_default = OxmlElement('w:rPrDefault'); defaults.append(run_default)
+    run_props = run_default.find(qn('w:rPr'))
+    if run_props is None:
+        run_props = OxmlElement('w:rPr'); run_default.append(run_props)
+    lang = OxmlElement('w:lang'); lang.set(qn('w:val'), 'en-US'); run_props.append(lang)
+    normal = d.styles['Normal'].element
+    if normal.rPr is not None:
+        normal_lang = normal.rPr.find(qn('w:lang'))
+        if normal_lang is not None: normal.rPr.remove(normal_lang)
+    p = tmp_path / 'default-language.docx'; d.save(p)
+    assert parse_document(p)['metadata']['language'] == 'en-US'
+
+def test_html_extracts_native_and_aria_form_labels(tmp_path):
+    p = tmp_path / 'form-labels.html'
+    p.write_text('''<!doctype html><html lang="en"><head><title>Form</title></head><body>
+    <label for="email">Email</label><input id="email" type="email">
+    <label>Search <input type="search"></label>
+    <span id="msg">Message</span><textarea aria-labelledby="msg"></textarea>
+    <input type="text" placeholder="Name"><input type="hidden" name="token">
+    </body></html>''')
+    controls = [e for e in parse_document(p)['elements'] if e['type'] == 'form_control']
+    assert [(e['control_type'], e['labelled']) for e in controls] == [
+        ('email', True), ('search', True), ('textarea', True), ('text', False)]
+
 def test_unextractable_semantics_are_declared_for_the_engine():
     pdf=parse_document(FIXTURES/'course.pdf')
     assert pdf['metadata']['tagged'] is False

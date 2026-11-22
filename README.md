@@ -236,8 +236,9 @@ const report = analyze(parsedDocument, { wcagLevel: 'AA' }); // {issues:[...]} o
 | 2.4.4 Link Purpose | A | Link text is empty / generic ("click here", "read more") / a raw URL | serious / moderate / minor |
 | 2.4.6 Headings and Labels | AA | Heading is empty | serious |
 | 3.1.1 Language of Page | A | Document language is missing or invalid | moderate |
+| 3.3.2 Labels or Instructions | A | HTML form control has no associated native or ARIA label | moderate |
 
-With `wcagLevel: 'A'`, the report omits the AA criteria (1.4.3 and 2.4.6). Images with `alt: ""` or `decorative: true` are treated as decorative. The engine skips colors it cannot parse instead of guessing. If an element has `color` but no `background`, the engine assumes a white background. Findings are sorted by page and then line, with document-level findings first.
+With `wcagLevel: 'A'`, the report includes the A criteria and omits the AA criteria (1.4.3 and 2.4.6). Images with `alt: ""` or `decorative: true` are treated as decorative. The engine skips colors it cannot parse instead of guessing. If an element has `color` but no `background`, the engine assumes a white background. Findings are sorted by page and then line, with document-level findings first.
 
 ### Parsed document input (contract with the parser)
 
@@ -394,8 +395,11 @@ The UI itself has not been certified for WCAG conformance; keyboard support and 
 
 - The HTML parser now rejects documents above 100,000 elements before building a full DOM. This makes a 10 MiB / 1.3-million-element input return a structured 422 in about five seconds on the deployed service, instead of reaching the parser timeout.
 - Tagged PDFs now recover heading text and levels from ParentTree marked-content IDs when PyMuPDF returns no structured text blocks. If the text-block-to-MCID mapping is ambiguous, the parser does not guess heading roles.
+- DOCX parsing now reads the document-wide default language from `styles.xml` when it is not repeated on the Normal style, so an embedded default such as `en-US` is recognized by the language check.
+- HTML parsing now detects text inputs, selects, and textareas without an associated `<label>`, `aria-label`, or `aria-labelledby` and reports WCAG 3.3.2. Placeholders alone do not count as labels.
 - The cross-team tester adds T-16 for the 10 MiB / 1.3-million-element response-time boundary. At code commit `4239ca2`, the live service's full self-test passed 16/16, and our 16-test suite also passed 16/16 against the podmate system.
-- Cross-testing against this deployment produced 27 passes, 4 skips, and 3 failures in the podmate's 34-case suite. T-30 now passes; the remaining differences are the fixture expectations for missing language (T-20/T-21) and the not-yet-supported form-label check (T-27).
+- Before the DOCX-language and form-label changes above, the sister team reported 27/30 passing, with the remaining failures involving a Word document's default language and an unlabeled form field. The pod still needs to agree on the default-language interpretation and whether WCAG 3.3.2 is in the common supported-check scope; cross-testing against the deployed update is still pending.
+- Current local results: 55 Node tests and 68 parser tests pass. These include regression coverage for Word document defaults and HTML labels.
 
 **Still incomplete:** AI-generated alt text suggestions, PowerPoint and Excel formats, repairs inside PDFs beyond metadata, and component/system coverage (`testing/pod-spec.json` still needs the pod's lists).
 

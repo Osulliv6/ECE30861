@@ -1,7 +1,7 @@
 // Accessibility analysis / WCAG engine.
 // Input: a parsed document (see README "Accessibility engine" for the format).
 // Output: the shared report contract consumed by the frontend: {issues:[...], message?}.
-import { checkAltText, checkHeadings, checkContrast, checkLinks, checkTables, checkMetadata, checkTagging } from './checks.mjs';
+import { checkAltText, checkHeadings, checkContrast, checkLinks, checkTables, checkMetadata, checkTagging, checkFormLabels } from './checks.mjs';
 
 export class EngineError extends Error {
   constructor(message, code = 'INVALID_PARSED_DOCUMENT') { super(message); this.name = 'EngineError'; this.code = code; }
@@ -16,10 +16,11 @@ export const SUPPORTED_CRITERIA = {
   '2.4.4':{name:'Link Purpose (In Context)',level:'A'},
   '2.4.6':{name:'Headings and Labels',level:'AA'},
   '3.1.1':{name:'Language of Page',level:'A'},
+  '3.3.2':{name:'Labels or Instructions',level:'A'},
 };
 
 export const NO_ISSUE_MESSAGE = 'No supported violations were detected. This does not certify full ADA or WCAG compliance.';
-const CHECKS = [checkMetadata, checkTagging, checkAltText, checkHeadings, checkContrast, checkLinks, checkTables];
+const CHECKS = [checkMetadata, checkTagging, checkAltText, checkHeadings, checkContrast, checkLinks, checkTables, checkFormLabels];
 const LEVELS = ['A','AA'];
 
 export function validateParsedDocument(doc) {
