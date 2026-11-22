@@ -171,15 +171,9 @@ export const SUITE = [
       return error('system', `150,000-element request did not receive a response within 30 seconds: ${e.message}`);
     }
     const atLimitMs = Math.round(performance.now() - started);
-    if (atLimit.status === 200) {
-      const result = expectReport(atLimit, {clean:true});
-      if (result.outcome !== 'pass') return result;
-    } else if (atLimit.status === 503) {
-      const message = atLimit.body?.message ?? atLimit.body?.error?.message;
-      if (typeof message !== 'string' || !message.trim()) return fail(`150,000-element processing response has no message: ${brief(atLimit.body)}.`);
-    } else {
-      return unexpected(atLimit, 'HTTP 200 report or documented HTTP 503 processing status at exactly 150,000 elements');
-    }
+    if (atLimit.status !== 200) return unexpected(atLimit, 'HTTP 200 accessibility report at exactly 150,000 elements');
+    const atLimitReport = expectReport(atLimit, {clean:true});
+    if (atLimitReport.outcome !== 'pass') return atLimitReport;
 
     const overStarted = performance.now();
     const over = await api.analyze({bytes:makeHtml(150_001), type:'text/html', name:'150001-elements.html', timeoutMs:30_000});
@@ -187,7 +181,7 @@ export const SUITE = [
     const rejected = expectProjectError(over, 422);
     if (rejected.outcome !== 'pass') return rejected;
     if (atLimitMs >= 30_000 || overMs >= 30_000) return fail(`Boundary requests exceeded 30 seconds (${atLimitMs} ms, ${overMs} ms).`);
-    return pass(`150,000 elements returned HTTP ${atLimit.status} in ${atLimitMs} ms; 150,001 returned 422 in ${overMs} ms.`);
+    return pass(`150,000 elements returned a report in ${atLimitMs} ms; 150,001 returned 422 in ${overMs} ms.`);
   }},
 ];
 

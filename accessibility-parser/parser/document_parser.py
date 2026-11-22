@@ -27,6 +27,29 @@ class ParseError(Exception):
         super().__init__(message)
         self.code = code
 
+
+def _limited_html_builder():
+    """Build BeautifulSoup's tree while stopping as soon as the HTML cap is crossed."""
+    from bs4.builder import HTMLParserTreeBuilder
+    from bs4.builder._htmlparser import BeautifulSoupHTMLParser
+
+    class LimitedHTMLParser(BeautifulSoupHTMLParser):
+        def __init__(self, soup, *args, **kwargs):
+            self.start_tag_count = 0
+            super().__init__(soup, *args, **kwargs)
+
+        def handle_starttag(self, tag, attrs, handle_empty_element=True):
+            self.start_tag_count += 1
+            if self.start_tag_count > MAX_HTML_ELEMENTS:
+                raise ParseError('UNPROCESSABLE_FILE', 'HTML document exceeds the supported element limit.')
+            super().handle_starttag(tag, attrs, handle_empty_element)
+
+    class LimitedHTMLTreeBuilder(HTMLParserTreeBuilder):
+        def feed(self, markup):
+            super().feed(markup, _parser_class=LimitedHTMLParser)
+
+    return LimitedHTMLTreeBuilder()
+
 def _clean(s):
     return re.sub(r'\s+', ' ', s or '').strip()
 
@@ -195,8 +218,9 @@ def _docx(path):
 def _html(path):
     from bs4 import BeautifulSoup, NavigableString, Tag
     raw=Path(path).read_text(encoding='utf-8-sig')
-    _check_html_complexity(raw)
-    soup=BeautifulSoup(raw, 'html.parser')
+    # Count tags as the DOM is built. This avoids parsing a large HTML file twice,
+    # and stops construction immediately when the configured complexity cap is crossed.
+    soup=BeautifulSoup(raw, builder=_limited_html_builder())
     title = _clean(soup.title.get_text(' ',strip=True)) if soup.title else ''
     metadata={'title':title,'language':soup.html.get('lang') if soup.html else None,'format':'html'}
     # Resolve embedded and inline CSS before <style> elements are removed.
