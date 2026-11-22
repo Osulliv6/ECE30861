@@ -59,6 +59,37 @@ def course_docx():
     doc.save(OUT / 'course.docx')
 
 
+def default_language_docx():
+    """A Word file whose language is set only in document-wide run defaults."""
+    doc = Document()
+    doc.core_properties.title = 'Default language test'
+    # This metadata field is not the language source the parser should use.
+    doc.core_properties.language = 'fr-FR'
+    doc.add_paragraph('This document uses the default run language.')
+    defaults = doc.styles.element.find(qn('w:docDefaults'))
+    run_default = defaults.find(qn('w:rPrDefault')) if defaults is not None else None
+    if run_default is None:
+        if defaults is None:
+            defaults = OxmlElement('w:docDefaults')
+        if defaults.getparent() is None:
+            doc.styles.element.insert(0, defaults)
+        run_default = OxmlElement('w:rPrDefault')
+        defaults.append(run_default)
+    run_props = run_default.find(qn('w:rPr'))
+    if run_props is None:
+        run_props = OxmlElement('w:rPr')
+        run_default.append(run_props)
+    lang = OxmlElement('w:lang')
+    lang.set(qn('w:val'), 'en-US')
+    run_props.append(lang)
+    normal_rpr = doc.styles['Normal'].element.rPr
+    if normal_rpr is not None:
+        normal_lang = normal_rpr.find(qn('w:lang'))
+        if normal_lang is not None:
+            normal_rpr.remove(normal_lang)
+    doc.save(OUT / 'default-language.docx')
+
+
 def course_pdf():
     """Untagged. Expected AA findings: 1.3.1 untagged PDF, 2.4.4 'click here'."""
     doc = fitz.open()
@@ -152,6 +183,7 @@ def encrypted_pdf():
 
 if __name__ == '__main__':
     course_docx()
+    default_language_docx()
     course_pdf()
     tagged_pdf()
     encrypted_pdf()

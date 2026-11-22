@@ -73,7 +73,7 @@ curl -X POST -H "Content-Type: application/json" -d '{"session_id":"<id from set
 curl "https://ece30861-ada.onrender.com/tester/test/report?session_id=<id from setup>"
 ```
 
-Our tester runs 16 tests (T-01 to T-16) against your `/health`, `/formats`, and `/analyze`, and returns one report with a pass, fail, error, or skip outcome per test, plus coverage. DOCX and PDF tests are skipped if your `/formats` doesn't list those formats. T-16 checks that a 10 MiB HTML document with 1.3 million elements receives a report or a 422 response within 30 seconds. A full run can take over a minute when the target is waking or processing the large boundary case. The full test list is in `testing/tester.mjs`, and the test documents are in `tests/fixtures/documents/`. OpenAPI descriptions are in `openapi/system.yaml` and `openapi/tester.yaml`. Implementation details are in [Cross-team testing interface](#cross-team-testing-interface).
+Our tester runs 19 tests (T-01 to T-19) against your `/health`, `/formats`, and `/analyze`, and returns one report with a pass, fail, error, or skip outcome per test, plus coverage. DOCX and PDF tests are skipped if your `/formats` doesn't list those formats. The Phase 5 tests check the large-page limit and response time, DOCX default language, unlabeled controls, and the exact 150,000-element boundary. A full run may take up to about 21 minutes when the target is waking or processing the boundary cases. The full test list is in `testing/tester.mjs`, and the test documents are in `tests/fixtures/documents/`. OpenAPI descriptions are in `openapi/system.yaml` and `openapi/tester.yaml`. Implementation details are in [Cross-team testing interface](#cross-team-testing-interface).
 
 ## Run locally
 
@@ -171,7 +171,7 @@ The course's cross-team testing spec requires each team to deploy a **system** a
 
 **Tester** (`testing/tester.mjs`):
 - `POST /tester/test/setup` with `{"target_url":"https://other-team.example/system"}` creates a session (UUID), calls the target's `/test/setup`, and returns 201 when the target is ready. It forwards the target's error status, message, and source.
-- `POST /tester/test/run` with `{"session_id":"…"}` runs tests T-01 to T-16 in order against the target's `/health`, `/formats`, and `/analyze`. It returns one report with a `pass`, `fail`, `error` (with `source`), or `skip` outcome per test, plus code, component, and system coverage.
+- `POST /tester/test/run` with `{"session_id":"…"}` runs tests T-01 to T-19 in order against the target's `/health`, `/formats`, and `/analyze`. It returns one report with a `pass`, `fail`, `error` (with `source`), or `skip` outcome per test, plus code, component, and system coverage.
 - `GET /tester/test/report?session_id=…` returns the stored report, or 409 before the suite ends.
 - A session runs only once. Running it again returns 409.
 
@@ -183,6 +183,9 @@ The suite checks:
 - the no-issue report
 - PDF analysis, and a figure without alt text in a tagged PDF (T-15, added in Phase 4)
 - a 10 MiB / 1.3-million-element HTML boundary expected to produce a report or 422 within 30 seconds (T-16, added in Phase 5)
+- DOCX default-language recognition (T-17, added in Phase 5)
+- HTML form labels: accessible native and ARIA names pass; a placeholder-only field reports WCAG 4.1.2 (T-18, added in Phase 5)
+- the exact 150,000-element HTML boundary and rejection of 150,001 elements within 30 seconds (T-19, added in Phase 5)
 - expected errors: unsupported type (415), empty file (422), corrupt DOCX (422), missing file (400), and invalid `wcag_level` (400)
 
 DOCX and PDF tests are skipped when the target's `/formats` doesn't list that format.
@@ -334,7 +337,7 @@ npm test
 
 `tests/remediation.test.mjs` covers `POST /remediate` end to end for HTML, DOCX, PDF, and TXT. It checks which findings are repaired and which remain, that re-analyzing the returned file gives exactly `issues_after`, level A filtering, title sanitizing, every error response, and temp-file deletion. The PDF and stylesheet features are covered in `tests/integration.test.mjs` (the tagged and untagged fixtures, and contrast from a `<style>` sheet) and in the parser tests.
 
-`tests/test-interface.test.mjs` covers the cross-team testing endpoints. It checks system setup and report (201, 409, 400, 404); a full tester run against this system in which all 16 tests pass and the stored report stays unchanged; forwarding of target setup failures; unreachable targets (source `communication`); and per-test outcomes when a fake target times out, returns 500, sends an invalid report, or doesn't support DOCX or PDF.
+`tests/test-interface.test.mjs` covers the cross-team testing endpoints. It checks system setup and report (201, 409, 400, 404); a full tester run against this system in which all 19 tests pass and the stored report stays unchanged; forwarding of target setup failures; unreachable targets (source `communication`); and per-test outcomes when a fake target times out, returns 500, sends an invalid report, or doesn't support DOCX or PDF.
 
 Parser tests run separately: `cd accessibility-parser && .venv/bin/python -m pytest -q`. `tests/test_css.py` covers the CSS cascade, colors, and contrast fixes; `tests/test_parser.py` covers tagged PDFs, including a missing ParentTree, `/ActualText`, and a cyclic tree; `tests/test_remediate.py` covers each repair per format and the CLI. To regenerate the document fixtures, run `accessibility-parser/.venv/bin/python tests/fixtures/documents/make_fixtures.py`. GitHub Actions (`.github/workflows/test.yml`) runs both test suites on every push, then builds the Docker image and runs the smoke test against it.
 
@@ -397,10 +400,10 @@ The UI itself has not been certified for WCAG conformance; keyboard support and 
 - Tagged PDFs now recover heading text and levels from ParentTree marked-content IDs when PyMuPDF returns no structured text blocks. If the text-block-to-MCID mapping is ambiguous, the parser does not guess heading roles.
 - DOCX parsing now reads the document-wide default language from `styles.xml` when it is not repeated on the Normal style, so an embedded default such as `en-US` is recognized by the language check.
 - HTML parsing now detects text inputs, selects, and textareas without an associated `<label>`, `aria-label`, or `aria-labelledby` and reports WCAG 4.1.2. Placeholders alone do not provide an accessible name.
-- The cross-team tester adds T-16 for the 10 MiB / 1.3-million-element response-time boundary. On November 22, 2026, our 16-test suite passed 16/16 against Team 19's live system (`accessassist-git-00012-fgg`).
+- The cross-team tester adds T-16 for the 10 MiB / 1.3-million-element response-time boundary, T-17 for Word default language, T-18 for accessible form names, and T-19 for the exact 150,000-element boundary. On November 22, 2026, the expanded suite passed 19/19 against both Team 19 and our deployed service.
 - Before the DOCX-language and form-label changes above, the sister team reported 27/30 passing, with the remaining failures involving a Word document's default language and an unlabeled form field. Targeted checks against both live services now confirm the DOCX default language is recognized and unlabeled controls are reported as WCAG 4.1.2.
-- The 150,000-element cutoff now matches Team 19's stated maximum. However, our Render instance returned 503 at the exact boundary because parsing exceeded its 25-second timeout, while Team 19 returned a report; both services return 422 for the 1.3-million-element test case. The pod should record that boundary behavior and decide whether improving our max-size processing is needed.
-- Current local results: 55 Node tests and 69 parser tests pass. These include regression coverage for Word document defaults, HTML labels, and the 150,000-element complexity limit.
+- The 150,000-element cutoff now matches Team 19's stated maximum. T-19 confirmed our Render service returns a 503 processing-timeout response at exactly 150,000 elements in 25.3 seconds (within the 30-second response limit), while Team 19 returns a report in about 7.9 seconds; both reject 150,001 with 422. This behavior is recorded so the pod can decide whether to optimize our processing at the exact limit.
+- Current local results: 57 Node tests and 69 parser tests pass. These include end-to-end regression coverage for Word document defaults, HTML labels, and both sides of the 150,000-element boundary.
 
 **Still incomplete:** AI-generated alt text suggestions, PowerPoint and Excel formats, repairs inside PDFs beyond metadata, and component/system coverage (`testing/pod-spec.json` still needs the pod's lists).
 

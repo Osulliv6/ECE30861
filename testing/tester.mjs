@@ -141,6 +141,54 @@ export const SUITE = [
     }
     return unexpected(response, 'HTTP 200 with a report or HTTP 422 for the complexity limit, within 30 seconds');
   }},
+  {id:'T-17', name:'DOCX document-default language is not reported as missing', run:async (api, ctx) => {
+    const unsupportedResult = unsupported(ctx, DOCX);
+    if (unsupportedResult) return unsupportedResult;
+    const response = await api.analyze({bytes:fixture('default-language.docx'), type:DOCX, name:'default-language.docx'});
+    return expectReport(response, {excludes:['3.1.1']});
+  }},
+  {id:'T-18', name:'Unlabeled HTML form control reports 4.1.2; native and ARIA labels pass', run:async api => {
+    const source = html('<label for="email">Email</label><input id="email" type="email">'
+      + '<span id="search-label">Search</span><input aria-labelledby="search-label">'
+      + '<input id="unlabeled" type="text" placeholder="Your name">');
+    const response = await api.analyze({bytes:source, type:'text/html', name:'form-labels.html'});
+    if (response.status !== 200) return unexpected(response, 'HTTP 200 with only WCAG 4.1.2 for the unlabeled control');
+    try { parseReport(response.body); } catch (e) { return fail(`Report does not match the shared report format: ${e.message}`); }
+    const issues = response.body.issues;
+    if (issues.length !== 1 || issues[0].wcag_criterion !== '4.1.2' || !issues[0].location?.selector?.includes('#unlabeled')) {
+      return fail(`Expected only 4.1.2 at the element with id "unlabeled"; received ${issues.map(i => `${i.wcag_criterion}@${i.location?.selector ?? 'document'}`).join(', ') || 'no findings'}.`);
+    }
+    return pass('Native and ARIA labels were accepted; only the placeholder-only field was reported under 4.1.2.');
+  }},
+  {id:'T-19', name:'150,000-element HTML boundary responds within 30 seconds; 150,001 is rejected', run:async api => {
+    const makeHtml = count => Buffer.from('<!doctype html><html lang="en"><head><title>Boundary</title></head><body>'
+      + '<i></i>'.repeat(count - 4) + '</body></html>');
+    const started = performance.now();
+    let atLimit;
+    try {
+      atLimit = await api.analyze({bytes:makeHtml(150_000), type:'text/html', name:'150000-elements.html', timeoutMs:30_000});
+    } catch (e) {
+      return error('system', `150,000-element request did not receive a response within 30 seconds: ${e.message}`);
+    }
+    const atLimitMs = Math.round(performance.now() - started);
+    if (atLimit.status === 200) {
+      const result = expectReport(atLimit, {clean:true});
+      if (result.outcome !== 'pass') return result;
+    } else if (atLimit.status === 503) {
+      const message = atLimit.body?.message ?? atLimit.body?.error?.message;
+      if (typeof message !== 'string' || !message.trim()) return fail(`150,000-element processing response has no message: ${brief(atLimit.body)}.`);
+    } else {
+      return unexpected(atLimit, 'HTTP 200 report or documented HTTP 503 processing status at exactly 150,000 elements');
+    }
+
+    const overStarted = performance.now();
+    const over = await api.analyze({bytes:makeHtml(150_001), type:'text/html', name:'150001-elements.html', timeoutMs:30_000});
+    const overMs = Math.round(performance.now() - overStarted);
+    const rejected = expectProjectError(over, 422);
+    if (rejected.outcome !== 'pass') return rejected;
+    if (atLimitMs >= 30_000 || overMs >= 30_000) return fail(`Boundary requests exceeded 30 seconds (${atLimitMs} ms, ${overMs} ms).`);
+    return pass(`150,000 elements returned HTTP ${atLimit.status} in ${atLimitMs} ms; 150,001 returned 422 in ${overMs} ms.`);
+  }},
 ];
 
 // Component and system coverage count pod-defined items exercised by at least one executed test.

@@ -5,11 +5,11 @@ from parser import parse_document, ParseError
 from parser import document_parser
 
 
-def test_html_element_limit_boundary(monkeypatch):
-    monkeypatch.setattr(document_parser, 'MAX_HTML_ELEMENTS', 3)
-    document_parser._check_html_complexity('<p></p><p></p><p></p>')
+def test_html_element_limit_accepts_150000_and_rejects_150001():
+    at_limit = '<i></i>' * document_parser.MAX_HTML_ELEMENTS
+    document_parser._check_html_complexity(at_limit)
     with pytest.raises(ParseError, match='element limit'):
-        document_parser._check_html_complexity('<p></p><p></p><p></p><p></p>')
+        document_parser._check_html_complexity(at_limit + '<i></i>')
 
 
 def test_docx_structure(tmp_path):

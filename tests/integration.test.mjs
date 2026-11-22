@@ -80,6 +80,14 @@ test('HTML reports unlabeled form controls but accepts associated and ARIA label
   assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location?.selector]), [['4.1.2','#unlabeled']]);
 });
 
+test('DOCX document-default language prevents a false missing-language finding', async () => {
+  const response = await upload(base, await fixture('default-language.docx'), {type:DOCX, name:'default-language.docx'});
+  assert.equal(response.status, 200);
+  const report = await response.json();
+  assert.equal(parseReport(report), report);
+  assert.ok(!criteria(report).includes('3.1.1'), JSON.stringify(criteria(report)));
+});
+
 test('untagged PDF gets one "not tagged" finding instead of guessed headings or alt text', async () => {
   const report = await (await upload(base, await fixture('course.pdf'), {type:'application/pdf', name:'course.pdf'})).json();
   assert.equal(parseReport(report), report);
@@ -113,6 +121,24 @@ test('a 10 MiB HTML file with 1.3 million elements is rejected quickly instead o
   assert.equal(response.status, 422);
   assert.equal((await response.json()).code, 'UNPROCESSABLE_FILE');
   assert.ok(durationMs < 30_000, `response took ${Math.round(durationMs)} ms`);
+});
+
+test('HTML element limit accepts exactly 150,000 and rejects 150,001 within 30 seconds', async () => {
+  const makeHtml = count => '<!doctype html><html lang="en"><head><title>Boundary</title></head><body>'
+    + '<i></i>'.repeat(count - 4) + '</body></html>';
+  const atLimit = Buffer.from(makeHtml(150_000));
+  const started = performance.now();
+  let response = await upload(base, atLimit, {type:'text/html', name:'150000-elements.html'});
+  assert.equal(response.status, 200);
+  assert.equal(parseReport(await response.json()).issues.length, 0);
+  assert.ok(performance.now() - started < 30_000, '150,000-element document exceeded 30 seconds');
+
+  const overLimit = Buffer.from(makeHtml(150_001));
+  const overStarted = performance.now();
+  response = await upload(base, overLimit, {type:'text/html', name:'150001-elements.html'});
+  assert.equal(response.status, 422);
+  assert.equal((await response.json()).code, 'UNPROCESSABLE_FILE');
+  assert.ok(performance.now() - overStarted < 30_000, 'over-limit document was not rejected promptly');
 });
 
 test('HTML contrast uses colors and backgrounds from embedded stylesheets', async () => {
