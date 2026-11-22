@@ -185,6 +185,54 @@ export const SUITE = [
   }},
 ];
 
+// Extra cases maintained by this team. They exercise WCAG behavior that is useful
+// for comparing implementations, but are kept separate from the pod's 19 agreed
+// cross-team cases until the pod explicitly adopts them.
+export const TEAM_EXTENSION_SUITE = [
+  {id:'E-01', name:'Wrapped labels, select labels, and ARIA labels name form controls', run:async api => {
+    const source = html('<label>Accept policy <input type="checkbox"></label>'
+      + '<label for="country">Country</label><select id="country"><option>US</option></select>'
+      + '<textarea aria-label="Comments"></textarea><input type="hidden" value="token"><input type="submit" value="Send">');
+    return expectReport(await api.analyze({bytes:source, type:'text/html', name:'form-label-variants.html'}), {clean:true});
+  }},
+  {id:'E-02', name:'Missing aria-labelledby target does not name a form control', run:async api => {
+    const source = html('<input id="missing-reference" aria-labelledby="does-not-exist">');
+    const response = await api.analyze({bytes:source, type:'text/html', name:'missing-aria-reference.html'});
+    if (response.status !== 200) return unexpected(response, 'HTTP 200 with a form-label finding');
+    try { parseReport(response.body); } catch (e) { return fail(`Report does not match the shared report format: ${e.message}`); }
+    const issues = response.body.issues;
+    return issues.length === 1 && issues[0].wcag_criterion === '4.1.2' && issues[0].location?.selector?.includes('#missing-reference')
+      ? pass('The unresolved aria-labelledby reference produced only a 4.1.2 finding.')
+      : fail(`Expected only 4.1.2 at #missing-reference; received ${issues.map(i => `${i.wcag_criterion}@${i.location?.selector ?? 'document'}`).join(', ') || 'no findings'}.`);
+  }},
+  {id:'E-03', name:'Data tables need headers while presentation tables are ignored', run:async api => {
+    const source = html('<table id="good"><tr><th>Course</th><th>Credits</th></tr><tr><td>ECE</td><td>3</td></tr></table>'
+      + '<table id="missing"><tr><td>Course</td><td>Credits</td></tr><tr><td>ECE</td><td>3</td></tr></table>'
+      + '<table role="presentation"><tr><td>Decorative layout</td></tr></table>');
+    const response = await api.analyze({bytes:source, type:'text/html', name:'table-semantics.html'});
+    if (response.status !== 200) return unexpected(response, 'HTTP 200 with a table-header finding');
+    try { parseReport(response.body); } catch (e) { return fail(`Report does not match the shared report format: ${e.message}`); }
+    const issues = response.body.issues;
+    return issues.length === 1 && issues[0].wcag_criterion === '1.3.1' && issues[0].location?.selector?.includes('#missing')
+      ? pass('Only the data table without headers was reported under 1.3.1.')
+      : fail(`Expected only 1.3.1 at #missing; received ${issues.map(i => `${i.wcag_criterion}@${i.location?.selector ?? 'document'}`).join(', ') || 'no findings'}.`);
+  }},
+  {id:'E-04', name:'Empty, generic, and raw-URL links have discernible-purpose findings', run:async api => {
+    const source = html('<a id="empty" href="/empty"></a><a id="generic" href="/details">click here</a><a id="url" href="https://example.com">https://example.com</a>');
+    const response = await api.analyze({bytes:source, type:'text/html', name:'link-purpose.html'});
+    if (response.status !== 200) return unexpected(response, 'HTTP 200 with link-purpose findings');
+    try { parseReport(response.body); } catch (e) { return fail(`Report does not match the shared report format: ${e.message}`); }
+    const issues = response.body.issues;
+    return issues.length === 3 && issues.every(i => i.wcag_criterion === '2.4.4')
+      ? pass('All three non-descriptive links were reported under 2.4.4.')
+      : fail(`Expected three 2.4.4 findings; received ${issues.map(i => i.wcag_criterion).join(', ') || 'no findings'}.`);
+  }},
+  {id:'E-05', name:'HTML content declared as a PDF is rejected without a report', run:async api => {
+    const response = await api.analyze({bytes:html('<h1>Not a PDF</h1>'), type:'application/pdf', name:'mismatched.pdf'});
+    return expectProjectError(response, 422);
+  }},
+];
+
 // Component and system coverage count pod-defined items exercised by at least one executed test.
 function podCoverage(spec, results) {
   if (!spec.items) return {covered:null, total:null, basis:spec.basis};

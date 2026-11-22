@@ -80,6 +80,34 @@ test('HTML reports unlabeled form controls but accepts associated and ARIA label
   assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location?.selector]), [['4.1.2','#unlabeled']]);
 });
 
+test('HTML form controls handle wrapped labels, ignored control types, and unresolved ARIA references', async () => {
+  const labelled = `<!doctype html><html lang="en"><head><title>Contact</title></head><body>
+    <label>Accept policy <input type="checkbox"></label>
+    <label for="country">Country</label><select id="country"><option>US</option></select>
+    <textarea aria-label="Comments"></textarea><input type="hidden" value="token"><input type="submit" value="Send">
+  </body></html>`;
+  let report = await (await upload(base, labelled, {type:'text/html', name:'label-variants.html'})).json();
+  assert.deepEqual(report.issues, []);
+
+  const unresolved = '<!doctype html><html lang="en"><head><title>Contact</title></head><body><input id="missing-reference" aria-labelledby="does-not-exist"></body></html>';
+  report = await (await upload(base, unresolved, {type:'text/html', name:'missing-aria-reference.html'})).json();
+  assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location?.selector]), [['4.1.2','#missing-reference']]);
+});
+
+test('HTML distinguishes data-table headers and link names from presentation markup', async () => {
+  const html = `<!doctype html><html lang="en"><head><title>Schedule</title></head><body>
+    <table id="good"><tr><th>Course</th><th>Credits</th></tr><tr><td>ECE</td><td>3</td></tr></table>
+    <table id="missing"><tr><td>Course</td><td>Credits</td></tr><tr><td>ECE</td><td>3</td></tr></table>
+    <table role="presentation"><tr><td>Decorative layout</td></tr></table>
+    <a id="empty" href="/empty"></a><a id="generic" href="/details">click here</a><a id="url" href="https://example.com">https://example.com</a>
+  </body></html>`;
+  const report = await (await upload(base, html, {type:'text/html', name:'table-and-links.html'})).json();
+  assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location?.selector]), [
+    ['1.3.1','#missing'],
+    ['2.4.4','#empty'], ['2.4.4','#generic'], ['2.4.4','#url'],
+  ]);
+});
+
 test('DOCX document-default language prevents a false missing-language finding', async () => {
   const response = await upload(base, await fixture('default-language.docx'), {type:DOCX, name:'default-language.docx'});
   assert.equal(response.status, 200);
