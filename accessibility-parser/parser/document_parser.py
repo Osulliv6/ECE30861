@@ -54,21 +54,17 @@ def _clean(s):
     return re.sub(r'\s+', ' ', s or '').strip()
 
 def _check_html_complexity(raw: str):
-    """Reject pathological DOMs before allocating a full BeautifulSoup tree."""
-    class Counter(HTMLParser):
-        def __init__(self):
-            super().__init__(convert_charrefs=True)
-            self.count = 0
+    """Reject pathological DOMs before allocating a full BeautifulSoup tree.
 
-        def handle_starttag(self, tag, attrs):
-            self.count += 1
-            if self.count > MAX_HTML_ELEMENTS:
-                raise ParseError('UNPROCESSABLE_FILE', 'HTML document exceeds the supported element limit.')
-
-        def handle_startendtag(self, tag, attrs):
-            self.handle_starttag(tag, attrs)
-
-    Counter().feed(raw)
+    This deliberately counts syntactic opening tags only. It is a fast guard for
+    resource limits, while BeautifulSoup remains the authoritative parser for an
+    accepted document. Using ``HTMLParser`` here made an exactly-at-limit page
+    take a second complete Python-level parse before its real parse.
+    """
+    opening_tag = re.compile(r'<[A-Za-z][A-Za-z0-9:_-]*(?=[\s/>])')
+    for count, _ in enumerate(opening_tag.finditer(raw), start=1):
+        if count > MAX_HTML_ELEMENTS:
+            raise ParseError('UNPROCESSABLE_FILE', 'HTML document exceeds the supported element limit.')
 
 def _add(elements, item):
     elements.append(item)
