@@ -162,7 +162,7 @@ The course's cross-team testing spec requires each team to deploy a **system** a
 | --- | --- |
 | System base URL | `https://ece30861-ada.onrender.com` |
 | Tester base URL | `https://ece30861-ada.onrender.com/tester` |
-| Access / run notes | No authentication. Maximum times: system setup 70 s (the free hosting plan can take up to 60 s to wake); tester setup 70 s (including target setup); tester run 17 minutes (15 target calls, each with a 60 s limit, plus coverage retrieval). |
+| Access / run notes | No authentication. Maximum times: system setup 70 s (the free hosting plan can take up to 60 s to wake); tester setup 70 s (including target setup); tester run up to 17 minutes (15 ordinary target calls at 60 s, the T-16 stress request at 30 s, plus coverage retrieval). |
 
 **System** (`testing/system.mjs`):
 - `POST /test/setup` accepts `{"session_id":"…","setup":{}}` and returns 201 with the same ID. It returns 409 for a duplicate ID and 400 for an invalid body.
@@ -171,7 +171,7 @@ The course's cross-team testing spec requires each team to deploy a **system** a
 
 **Tester** (`testing/tester.mjs`):
 - `POST /tester/test/setup` with `{"target_url":"https://other-team.example/system"}` creates a session (UUID), calls the target's `/test/setup`, and returns 201 when the target is ready. It forwards the target's error status, message, and source.
-- `POST /tester/test/run` with `{"session_id":"…"}` runs tests T-01 to T-15 in order against the target's `/health`, `/formats`, and `/analyze`. It returns one report with a `pass`, `fail`, `error` (with `source`), or `skip` outcome per test, plus code, component, and system coverage.
+- `POST /tester/test/run` with `{"session_id":"…"}` runs tests T-01 to T-16 in order against the target's `/health`, `/formats`, and `/analyze`. It returns one report with a `pass`, `fail`, `error` (with `source`), or `skip` outcome per test, plus code, component, and system coverage.
 - `GET /tester/test/report?session_id=…` returns the stored report, or 409 before the suite ends.
 - A session runs only once. Running it again returns 409.
 
@@ -182,6 +182,7 @@ The suite checks:
 - contrast from colors set in an embedded `<style>` sheet (T-14, added in Phase 4)
 - the no-issue report
 - PDF analysis, and a figure without alt text in a tagged PDF (T-15, added in Phase 4)
+- a 10 MiB / 1.3-million-element HTML boundary expected to produce a report or 422 within 30 seconds (T-16, added in Phase 5)
 - expected errors: unsupported type (415), empty file (422), corrupt DOCX (422), missing file (400), and invalid `wcag_level` (400)
 
 DOCX and PDF tests are skipped when the target's `/formats` doesn't list that format.
@@ -388,6 +389,13 @@ The UI itself has not been certified for WCAG conformance; keyboard support and 
 - `openapi/system.yaml` documents `/remediate`, and the tester spec lists T-01 to T-15.
 
 **Tests:** 51 Node tests (37 before) and 52 parser tests (9 before). The smoke test also checks the tagged PDF, stylesheet contrast, and `/remediate`.
+
+## Phase 5 changes
+
+- The HTML parser now rejects documents above 100,000 elements before building a full DOM. This makes a 10 MiB / 1.3-million-element input return a structured 422 in about five seconds on the deployed service, instead of reaching the parser timeout.
+- Tagged PDFs now recover heading text and levels from ParentTree marked-content IDs when PyMuPDF returns no structured text blocks. If the text-block-to-MCID mapping is ambiguous, the parser does not guess heading roles.
+- The cross-team tester adds T-16 for the 10 MiB / 1.3-million-element response-time boundary. At code commit `4239ca2`, the live service's full self-test passed 16/16, and our 16-test suite also passed 16/16 against the podmate system.
+- Cross-testing against this deployment produced 27 passes, 4 skips, and 3 failures in the podmate's 34-case suite. T-30 now passes; the remaining differences are the fixture expectations for missing language (T-20/T-21) and the not-yet-supported form-label check (T-27).
 
 **Still incomplete:** AI-generated alt text suggestions, PowerPoint and Excel formats, repairs inside PDFs beyond metadata, and component/system coverage (`testing/pod-spec.json` still needs the pod's lists).
 

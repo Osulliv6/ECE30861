@@ -3,8 +3,10 @@ info:
   title: ECE 30861 ADA Tester Interface
   version: 1.0.0
   description: >
-    Runs this team's suite (T-01 to T-15) against any target system's project API
+    Runs this team's suite (T-01 to T-16) against any target system's project API
     (/health, /formats, /analyze) and returns one report with results and coverage.
+    T-16 checks that a 10 MiB HTML input with 1.3 million elements returns a report
+    or HTTP 422 within 30 seconds.
 servers:
   - url: https://ece30861-ada.onrender.com/tester
 paths:
