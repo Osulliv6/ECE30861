@@ -16,7 +16,7 @@ export const SUPPORTED_CRITERIA = {
   '2.4.4':{name:'Link Purpose (In Context)',level:'A'},
   '2.4.6':{name:'Headings and Labels',level:'AA'},
   '3.1.1':{name:'Language of Page',level:'A'},
-  '3.3.2':{name:'Labels or Instructions',level:'A'},
+  '4.1.2':{name:'Name, Role, Value',level:'A'},
 };
 
 export const NO_ISSUE_MESSAGE = 'No supported violations were detected. This does not certify full ADA or WCAG compliance.';

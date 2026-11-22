@@ -77,7 +77,7 @@ test('HTML reports unlabeled form controls but accepts associated and ARIA label
     <input id="unlabeled" type="text" placeholder="Your name">
   </body></html>`;
   const report = await (await upload(base, html, {type:'text/html', name:'form-labels.html'})).json();
-  assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location?.selector]), [['3.3.2','#unlabeled']]);
+  assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location?.selector]), [['4.1.2','#unlabeled']]);
 });
 
 test('untagged PDF gets one "not tagged" finding instead of guessed headings or alt text', async () => {

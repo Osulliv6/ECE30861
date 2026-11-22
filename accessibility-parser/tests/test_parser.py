@@ -2,6 +2,14 @@ from pathlib import Path
 import pytest
 from docx import Document
 from parser import parse_document, ParseError
+from parser import document_parser
+
+
+def test_html_element_limit_boundary(monkeypatch):
+    monkeypatch.setattr(document_parser, 'MAX_HTML_ELEMENTS', 3)
+    document_parser._check_html_complexity('<p></p><p></p><p></p>')
+    with pytest.raises(ParseError, match='element limit'):
+        document_parser._check_html_complexity('<p></p><p></p><p></p><p></p>')
 
 
 def test_docx_structure(tmp_path):

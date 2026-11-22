@@ -47,13 +47,13 @@ test('links, tables and metadata',()=>{
   assert.deepEqual(criteria(analyze({elements:[]})),['2.4.2','3.1.1']);
   assert.deepEqual(criteria(analyze({metadata:{title:'T',language:'english'},elements:[]})),['3.1.1']);
 });
-test('form controls without an associated or accessible label produce WCAG 3.3.2 findings',()=>{
+test('form controls without an accessible name produce WCAG 4.1.2 findings',()=>{
   const report = analyze({metadata:meta,elements:[
     {type:'form_control',control_type:'text',labelled:false,text:'text',location:{selector:'#name'}},
     {type:'form_control',control_type:'email',labelled:true,text:'Email',location:{selector:'#email'}},
   ]});
-  assert.deepEqual(report.issues.map(i=>[i.wcag_criterion,i.location.selector]),[['3.3.2','#name']]);
-  assert.deepEqual(analyze({metadata:meta,elements:[{type:'form_control',labelled:false,text:'text'}]},{wcagLevel:'A'}).issues.map(i=>i.wcag_criterion),['3.3.2']);
+  assert.deepEqual(report.issues.map(i=>[i.wcag_criterion,i.location.selector]),[['4.1.2','#name']]);
+  assert.deepEqual(analyze({metadata:meta,elements:[{type:'form_control',labelled:false,text:'text'}]},{wcagLevel:'A'}).issues.map(i=>i.wcag_criterion),['4.1.2']);
 });
 test('WCAG level A excludes AA-only criteria',()=>{
   const levels=new Set(analyze(syllabus,{wcagLevel:'A'}).issues.map(i=>SUPPORTED_CRITERIA[i.wcag_criterion].level));

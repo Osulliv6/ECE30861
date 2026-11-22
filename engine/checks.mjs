@@ -215,12 +215,12 @@ export function checkMetadata(doc) {
   return out;
 }
 
-// ---- 3.3.2 Labels or Instructions -------------------------------------------------------
+// ---- 4.1.2 Name, Role, Value -------------------------------------------------------------
 
 export function checkFormLabels(doc) {
   return doc.elements
     .filter(el => el.type === 'form_control' && el.labelled !== true)
-    .map(el => finding('3.3.2','moderate',el,el.text || el.control_type || 'Form control',
+    .map(el => finding('4.1.2','moderate',el,el.text || el.control_type || 'Form control',
       'A form control has no associated label or accessible name.',
-      'Add a visible label and associate it with the control, or provide an accessible name that clearly identifies its purpose.'));
+      'Associate a visible label with the control or provide a programmatically determinable accessible name that clearly identifies its purpose.'));
 }

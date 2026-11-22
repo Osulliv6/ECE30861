@@ -236,7 +236,7 @@ const report = analyze(parsedDocument, { wcagLevel: 'AA' }); // {issues:[...]} o
 | 2.4.4 Link Purpose | A | Link text is empty / generic ("click here", "read more") / a raw URL | serious / moderate / minor |
 | 2.4.6 Headings and Labels | AA | Heading is empty | serious |
 | 3.1.1 Language of Page | A | Document language is missing or invalid | moderate |
-| 3.3.2 Labels or Instructions | A | HTML form control has no associated native or ARIA label | moderate |
+| 4.1.2 Name, Role, Value | A | HTML form control has no associated native or ARIA accessible name | moderate |
 
 With `wcagLevel: 'A'`, the report includes the A criteria and omits the AA criteria (1.4.3 and 2.4.6). Images with `alt: ""` or `decorative: true` are treated as decorative. The engine skips colors it cannot parse instead of guessing. If an element has `color` but no `background`, the engine assumes a white background. Findings are sorted by page and then line, with document-level findings first.
 
@@ -315,7 +315,7 @@ The repaired file is returned as base64 in `remediated_file`, with a download na
 - **Error-code detail:** Error bodies follow the Phase 2 `{code,message}` shape. The implementation also uses specific codes for malformed requests and parser timeouts; the pod should keep the code list aligned as the shared OpenAPI contract is refined.
 - **Coverage:** code coverage is reported as `null`, because line instrumentation isn't enabled in the deployed service. Component and system coverage are `null` until the pod's component and acceptance-criteria lists are added to `testing/pod-spec.json`.
 - **PDF analysis:** tagged PDFs are checked for heading order, figure alt text, and table headers from their tags. Other tag roles (lists, reading order compared with visual order, artifacts) aren't evaluated, and an untagged PDF gets one "not tagged" finding rather than per-element findings. Scanned PDFs (images of text) aren't analyzed, and PDF text contrast assumes a white background.
-- **Very large HTML structure:** HTML documents with more than 100,000 elements are rejected with 422 before the full DOM is built. This prevents pathological files from consuming the parser's full time budget; the 10 MiB byte limit still applies separately.
+- **Very large HTML structure:** HTML documents with more than 150,000 elements are rejected with 422 before the full DOM is built. This matches Team 19's current limit; the 10 MiB byte limit still applies separately.
 - **Contrast:** HTML contrast covers embedded and inline CSS but not external stylesheets, `var()`, background images or gradients, conditional media queries, or interaction states (see [Contrast from stylesheets](#contrast-from-stylesheets)). DOCX contrast uses run colors against white; paragraph shading isn't read.
 - **Remediation** repairs only mechanical problems; alt text, link wording, and PDF tagging still need a person. PDF repair is limited to title and language. DOCX heading repair needs the document to define the target `Heading N` style. The repair endpoint isn't part of the shared pod contract, so podmates' testers don't exercise it.
 - **New tester cases T-14 and T-15** check stylesheet contrast and tagged-PDF alt text. These go beyond what a podmate's system may implement if the pod specification only requires inline styles and untagged PDFs.
@@ -393,13 +393,13 @@ The UI itself has not been certified for WCAG conformance; keyboard support and 
 
 ## Phase 5 changes
 
-- The HTML parser now rejects documents above 100,000 elements before building a full DOM. This makes a 10 MiB / 1.3-million-element input return a structured 422 in about five seconds on the deployed service, instead of reaching the parser timeout.
+- The HTML parser now rejects documents above 150,000 elements before building a full DOM. This makes a 10 MiB / 1.3-million-element input return a structured 422 instead of reaching the parser timeout.
 - Tagged PDFs now recover heading text and levels from ParentTree marked-content IDs when PyMuPDF returns no structured text blocks. If the text-block-to-MCID mapping is ambiguous, the parser does not guess heading roles.
 - DOCX parsing now reads the document-wide default language from `styles.xml` when it is not repeated on the Normal style, so an embedded default such as `en-US` is recognized by the language check.
-- HTML parsing now detects text inputs, selects, and textareas without an associated `<label>`, `aria-label`, or `aria-labelledby` and reports WCAG 3.3.2. Placeholders alone do not count as labels.
+- HTML parsing now detects text inputs, selects, and textareas without an associated `<label>`, `aria-label`, or `aria-labelledby` and reports WCAG 4.1.2. Placeholders alone do not provide an accessible name.
 - The cross-team tester adds T-16 for the 10 MiB / 1.3-million-element response-time boundary. At code commit `4239ca2`, the live service's full self-test passed 16/16, and our 16-test suite also passed 16/16 against the podmate system.
-- Before the DOCX-language and form-label changes above, the sister team reported 27/30 passing, with the remaining failures involving a Word document's default language and an unlabeled form field. The pod still needs to agree on the default-language interpretation and whether WCAG 3.3.2 is in the common supported-check scope; cross-testing against the deployed update is still pending.
-- Current local results: 55 Node tests and 68 parser tests pass. These include regression coverage for Word document defaults and HTML labels.
+- Before the DOCX-language and form-label changes above, the sister team reported 27/30 passing, with the remaining failures involving a Word document's default language and an unlabeled form field. Their live service identifies an unlabeled field under WCAG 4.1.2; our check uses the same criterion.
+- Current local results: 55 Node tests and 69 parser tests pass. These include regression coverage for Word document defaults, HTML labels, and the 150,000-element complexity limit.
 
 **Still incomplete:** AI-generated alt text suggestions, PowerPoint and Excel formats, repairs inside PDFs beyond metadata, and component/system coverage (`testing/pod-spec.json` still needs the pod's lists).
 

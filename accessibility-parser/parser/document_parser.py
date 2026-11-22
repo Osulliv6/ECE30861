@@ -20,7 +20,7 @@ SUPPORTED_MIME_TYPES = [
 ]
 EXTENSIONS = {'.docx': SUPPORTED_MIME_TYPES[0], '.pdf': SUPPORTED_MIME_TYPES[1],
               '.html': 'text/html', '.htm': 'text/html', '.txt': 'text/plain'}
-MAX_HTML_ELEMENTS = 100_000
+MAX_HTML_ELEMENTS = 150_000
 
 class ParseError(Exception):
     def __init__(self, code: str, message: str):
