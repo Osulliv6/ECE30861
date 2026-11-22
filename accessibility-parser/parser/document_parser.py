@@ -218,8 +218,11 @@ def _docx(path):
 def _html(path):
     from bs4 import BeautifulSoup, NavigableString, Tag
     raw=Path(path).read_text(encoding='utf-8-sig')
-    # Count tags as the DOM is built. This avoids parsing a large HTML file twice,
-    # and stops construction immediately when the configured complexity cap is crossed.
+    # Do a lightweight count before allocating BeautifulSoup nodes. On a document
+    # far above the cap this exits at element 150,001 instead of constructing
+    # 150,000 DOM nodes first. The limited builder remains a second guard against
+    # future changes that bypass this preflight.
+    _check_html_complexity(raw)
     soup=BeautifulSoup(raw, builder=_limited_html_builder())
     title = _clean(soup.title.get_text(' ',strip=True)) if soup.title else ''
     metadata={'title':title,'language':soup.html.get('lang') if soup.html else None,'format':'html'}
