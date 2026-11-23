@@ -108,6 +108,26 @@ test('HTML distinguishes data-table headers and link names from presentation mar
   ]);
 });
 
+test('HTML image-only links, ARIA image names, role="none", and header-only table rows avoid false findings', async () => {
+  const html = `<!doctype html><html lang="en"><head><title>Course links</title></head><body>
+    <a id="home" href="/home"><img id="home-icon" src="home.png" alt="Home"></a>
+    <a id="unnamed" href="/next"><img id="unnamed-icon" src="next.png"></a>
+    <img id="search" src="search.png" alt="" aria-label="Search">
+    <table id="layout" role="none"><tr><td>Left</td><td>Right</td></tr><tr><td>A</td><td>B</td></tr></table>
+    <table id="single"><tr><th>Assignments</th></tr><tr><td>HW1</td></tr><tr><td>HW2</td></tr></table>
+    <table id="grid"><tr><td></td><th>Mon</th><th>Tue</th></tr><tr><th>9am</th><td>Lecture</td><td>Lab</td></tr></table>
+    <table id="missing"><tr><td>Course</td><td>Credits</td></tr><tr><td>ECE</td><td>3</td></tr></table>
+  </body></html>`;
+  const response = await upload(base, html, {type:'text/html', name:'accessible-names.html'});
+  assert.equal(response.status, 200);
+  const report = await response.json();
+  assert.equal(parseReport(report), report);
+  // Only the link/image with no name at all and the table without headers are reported.
+  assert.deepEqual(report.issues.map(i => [i.wcag_criterion, i.location?.selector]).sort(), [
+    ['1.1.1','#unnamed-icon'], ['1.3.1','#missing'], ['2.4.4','#unnamed'],
+  ]);
+});
+
 test('DOCX document-default language prevents a false missing-language finding', async () => {
   const response = await upload(base, await fixture('default-language.docx'), {type:DOCX, name:'default-language.docx'});
   assert.equal(response.status, 200);

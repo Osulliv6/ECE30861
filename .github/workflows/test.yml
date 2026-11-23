@@ -19,11 +19,11 @@ jobs:
         run: pip install -r accessibility-parser/requirements.txt
       - name: Validate OpenAPI specifications
         run: pipx run openapi-spec-validator openapi/system.yaml openapi/tester.yaml
-      - name: Parser tests (pytest)
+      - name: Parser tests with line coverage (pytest-cov)
         working-directory: accessibility-parser
-        run: python -m pytest -q
-      - name: Frontend, engine, backend and end-to-end tests
-        run: npm test
+        run: python -m pytest -q --cov=parser --cov-report=term
+      - name: Frontend, engine, backend and end-to-end tests with line coverage
+        run: npm run test:coverage
         env:
           PYTHON: python
 

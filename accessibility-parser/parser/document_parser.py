@@ -13,7 +13,7 @@ from typing import Any
 
 from .css import StyleResolver
 from .pdf_tags import read_structure
-from .table_logic import table_semantics
+from .table_logic import own_rows, table_semantics
 
 SUPPORTED_MIME_TYPES = [
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -335,9 +335,8 @@ def _html(path):
                 add_semantic_text(item, node)
                 walk(node)
             elif name=='table':
-# Keep nested-table handling from main and role='none' support from this PR.
-                rows = [r for r in node.find_all('tr') if r.find_parent('table') is node]
-                row_count, header_row, header_col = table_semantics(node)
+                rows = own_rows(node)  # excludes rows of nested tables
+                row_count, header_row, header_col = table_semantics(node, rows)
                 _add(elements, {'type': 'table', 'rows': row_count,
                                 'has_header_row': header_row,
                                 'has_header_column': header_col,
