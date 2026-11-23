@@ -190,7 +190,7 @@ The suite checks:
 
 DOCX and PDF tests are skipped when the target's `/formats` doesn't list that format.
 
-Component and system coverage count the components and acceptance criteria listed in the pod specification. Until the pod lists are added to `testing/pod-spec.json`, both are reported as `null` with an explanation. To fill them in, map each pod item ID to the tests that exercise it, for example `"items": {"AC-01": ["T-03", "T-07"]}`.
+Component and system coverage use the provisional Team 20 mapping in `testing/pod-spec.json`. Counts represent cases with pass or fail verdicts. See [Phase 6 verification](tests/PHASE6_REVIEW.md) for the mapping source and manual checks.
 
 Both services are described in `openapi/system.yaml` and `openapi/tester.yaml`. CI validates both files on every push. The smoke test also runs the tester against the service's own system.
 
@@ -247,7 +247,7 @@ With `wcagLevel: 'A'`, the report includes the A criteria and omits the AA crite
 
 The `elements` array is in reading order. Only `type` is required; the engine uses any other fields that are present. It ignores unknown element types and fields, so the parser can send more data than the engine uses.
 
-`metadata.not_extracted` lists things the parser could not observe for this format. The engine skips the matching checks so that "unknown" is never reported as "missing". The values are `alt_text`, `headings`, `tables`, `title`, and `language`. For PDFs the parser also sends `metadata.tagged`. A tagged PDF has its headings, figures (with `/Alt` or `/ActualText`), and tables read from its structure tree, so nothing is listed as not extracted. An untagged PDF (`tagged: false`) lists `["alt_text","headings","tables"]`: those semantics do not exist for assistive technology, and the engine reports the missing tags once instead. For plain text it sends all five values, because plain text cannot contain any of these.
+`metadata.not_extracted` lists things the parser could not observe for this format. The engine skips the matching checks so that "unknown" is never reported as "missing". The values are `alt_text`, `headings`, `tables`, `title`, and `language`. For PDFs the parser also sends `metadata.tagged`. For tagged PDFs, the parser reads headings, figures (with `/Alt` or `/ActualText`), and tables from the structure tree. It tracks pages where heading recovery is uncertain. An untagged PDF (`tagged: false`) lists `["alt_text","headings","tables"]`: those semantics do not exist for assistive technology, and the engine reports the missing tags once instead. For plain text it sends all five values, because plain text cannot contain any of these.
 
 ```json
 {
@@ -317,8 +317,8 @@ The repaired file is returned as base64 in `remediated_file`, with a download na
 ## Known limitations
 
 - **Error-code detail:** Error bodies follow the Phase 2 `{code,message}` shape. The implementation also uses specific codes for malformed requests and parser timeouts; the pod should keep the code list aligned as the shared OpenAPI contract is refined.
-- **Coverage:** `GET /test/report` reports code coverage as `null`, because line instrumentation isn't enabled in the deployed service. Line coverage from the automated suites is measured in CI instead (see [Verification](#verification)). Component and system coverage are `null` until the pod's component and acceptance-criteria lists are added to `testing/pod-spec.json`.
-- **PDF analysis:** tagged PDFs are checked for heading order, figure alt text, and table headers from their tags. Other tag roles (lists, reading order compared with visual order, artifacts) aren't evaluated, and an untagged PDF gets one "not tagged" finding rather than per-element findings. Scanned PDFs (images of text) aren't analyzed, and PDF text contrast assumes a white background.
+- **Coverage:** `GET /test/report` reports code coverage as `null`, because line instrumentation isn't enabled in the deployed service. Line coverage from the automated suites is measured in CI instead (see [Verification](#verification)). Component and system coverage use a provisional mapping pending Pod F confirmation.
+- **PDF analysis:** tagged PDFs are checked for headings, figure alt text and table headers. PDF form fields are checked for accessible names. OCR and simple reading-order comparisons produce manual review notes. Complex layouts, full tag-role validation and page backgrounds remain outside the automated checks.
 - **Very large HTML structure:** HTML documents with more than 150,000 elements are rejected with 422 before the full DOM is built. The 10 MiB byte limit still applies separately. The cross-team boundary test requires a valid report at exactly 150,000 elements and a 422 response at 150,001 elements, each within 30 seconds.
 - **Contrast:** HTML contrast covers embedded and inline CSS but not external stylesheets, `var()`, background images or gradients, conditional media queries, or interaction states (see [Contrast from stylesheets](#contrast-from-stylesheets)). DOCX contrast uses run colors against white; paragraph shading isn't read.
 - **Remediation** repairs only mechanical problems; alt text, link wording, and PDF tagging still need a person. PDF repair is limited to title and language. DOCX heading repair needs the document to define the target `Heading N` style. The repair endpoint isn't part of the shared pod contract, so podmates' testers don't exercise it.
@@ -329,6 +329,9 @@ The repaired file is returned as base64 in `remediated_file`, with a download na
 - **The tester assumes our interpretation of the shared API**, for example contrast checks at level AA, a 415 error for unsupported types, and a 422 error for empty files. A podmate's system may differ where the pod specification is unclear.
 
 ## Verification
+
+The PDF analyzer can return page-specific `review_notes` for possible scans, uncertain heading recovery, and reading-order mismatches in simple layouts. OCR uses local Tesseract English data and examines up to three candidate pages within a four-second OCR allowance. The Docker image includes Tesseract. The analyzer can detect unnamed PDF form fields and leave a suggested fix. Complex PDF layouts, other structure roles, and manual screen-reader verification remain outside the automated checks. See [Phase 6 verification](tests/PHASE6_REVIEW.md) for fixtures and how to collect timing and remediation evidence.
+
 
 ```sh
 npm test
@@ -408,7 +411,7 @@ The UI itself has not been certified for WCAG conformance; keyboard support and 
 - HTML accessible names (PR #4): images take their name from `aria-label` or `aria-labelledby` before `alt`, so `<img alt="" aria-label="Search">` is not treated as decorative. A link with no text is named by the accessible names of the images inside it, so an image-only link with `alt="Home"` is not reported under 2.4.4. Tables with `role="none"` are treated as layout tables, like `role="presentation"`.
 - Current local results: 60 Node tests and 98 parser tests pass. These include end-to-end regression coverage for Word document defaults, HTML labels, both sides of the 150,000-element boundary, image-only links, ARIA-named images, `role="none"` tables, and header-only table rows.
 
-**Still incomplete:** AI-generated alt text suggestions, PowerPoint and Excel formats, repairs inside PDFs beyond metadata, and component/system coverage (`testing/pod-spec.json` still needs the pod's lists).
+**Still incomplete:** AI-generated alt text suggestions, PowerPoint and Excel formats, repairs inside PDFs beyond metadata, and Pod F confirmation of the draft coverage mapping.
 
 ## AI contribution
 

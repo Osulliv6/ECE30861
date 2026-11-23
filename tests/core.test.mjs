@@ -18,6 +18,9 @@ test('uploads use discovered types, binary MB boundary and browser MIME fallback
 });
 test('complete findings and no-issue reports are accepted; partial reports are never successful',()=>{
   assert.equal(parseReport(sampleIssues).issues.length,3);assert.equal(parseReport(sampleClean).issues.length,0);
+  const review = {...sampleClean,review_notes:[{page:2,description:'Possible scan.',suggested_fix:'Check the text layer.'}]};
+  assert.deepEqual(parseReport(review), review);
+  assert.throws(()=>parseReport({...review,review_notes:[{...review.review_notes[0],page:0}]}), ApiError);
   for(const bad of [{},{issues:[]},{issues:[],message:''},{issues:[],message:42},{error:{message:'Failure'},issues:[]},{issues:[{...sampleIssues.issues[0],suggested_fix:''}]},{issues:[{...sampleIssues.issues[0],wcag_criterion:['1.1.1']}]},{issues:[{...sampleIssues.issues[0],location:'page 2'}]},{issues:[{...sampleIssues.issues[0],location:{page:-1}}]}])assert.throws(()=>parseReport(bad),ApiError);
 });
 test('multipart upload keeps the file field and wcag_level without a forced Content-Type',async()=>{

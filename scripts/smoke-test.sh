@@ -17,6 +17,9 @@ echo "POST $BASE/analyze (PDF fixture)"
 curl -fsS -F "file=@$DIR/tests/fixtures/documents/course.pdf;type=application/pdf" "$BASE/analyze" | grep -q '"issues"'
 echo "POST $BASE/analyze (tagged PDF fixture: figure alt text read from tags)"
 curl -fsS -F "file=@$DIR/tests/fixtures/documents/tagged.pdf;type=application/pdf" "$BASE/analyze" | grep -q '"snippet":"Figure 1"'
+echo "POST $BASE/analyze (image-only PDF page requires OCR)"
+curl -fsS -F "file=@$DIR/tests/fixtures/documents/mixed-scan.pdf;type=application/pdf" \
+  "$BASE/analyze" | grep -q 'OCR found text'
 echo "POST $BASE/analyze (stylesheet contrast)"
 printf '<!doctype html><html lang="en"><head><title>T</title><style>.m{color:#aaa}</style></head><body><p class="m">Faint</p></body></html>' \
   | curl -fsS -F "file=@-;filename=s.html;type=text/html" "$BASE/analyze" | grep -q '"wcag_criterion":"1.4.3"'

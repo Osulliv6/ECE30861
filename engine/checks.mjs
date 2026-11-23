@@ -43,7 +43,9 @@ export function checkAltText(doc) {
     if (el.alt === undefined || el.alt === null) {
       out.push(finding('1.1.1','serious',el,label,
         'An image has no alternative text.',
-        'Add alternative text that conveys the image’s purpose and the information it provides. If the image is purely decorative, mark it as decorative so assistive technology skips it.'));
+        doc.metadata?.format === 'pdf'
+          ? 'Set alternate text on the Figure tag in a PDF accessibility editor. Describe the information conveyed, or mark a decorative figure as an artifact.'
+          : 'Add alternative text that conveys the image’s purpose and the information it provides. If the image is purely decorative, mark it as decorative so assistive technology skips it.'));
       continue;
     }
     const alt = String(el.alt).trim();
@@ -77,15 +79,20 @@ export function checkHeadings(doc) {
   const out = [];
   if (notExtracted(doc,'headings')) return out;
   const headings = doc.elements.filter(el=>el.type === 'heading');
+  const uncertainPages = new Set(doc.metadata?.unknown_heading_pages ?? []);
+  const uncertainOrder = doc.metadata?.heading_order_unknown === true;
   const textChars = doc.elements.filter(el=>el.type === 'text').reduce((n,el)=>n+String(el.text ?? '').length,0);
 
-  if (!headings.length && textChars >= 1500) {
+  if (!headings.length && !uncertainPages.size && !uncertainOrder && textChars >= 1500) {
     out.push(finding('1.3.1','moderate',null,'',
       'The document has substantial text but no headings, so its structure is not available to assistive technology.',
       'Mark section titles with heading styles (Heading 1, Heading 2, and so on) so screen reader users can navigate by section.'));
   }
 
   let prev = 0;
+  let previousPage = 0;
+  const uncertainty = [...uncertainPages].sort((a,b) => a - b);
+  let nextUncertain = 0;
   for (const h of headings) {
     const text = String(h.text ?? '').trim();
     if (!text) {
@@ -94,20 +101,26 @@ export function checkHeadings(doc) {
         'Add descriptive text to the heading or remove the empty heading.'));
       continue;
     }
-    if (prev === 0 && h.level !== 1) {
+    const page = h.location?.page ?? 0;
+    while (uncertainty[nextUncertain] < previousPage) nextUncertain++;
+    const comparable = !uncertainOrder && !(uncertainty[nextUncertain] <= page);
+    if (comparable && prev === 0 && h.level !== 1) {
       out.push(finding('1.3.1','minor',h,text,
         `The first heading is level ${h.level} rather than level 1.`,
         'Start the document’s heading structure with a level 1 heading for the main title.'));
-    } else if (prev && h.level > prev + 1) {
+    } else if (comparable && prev && h.level > prev + 1) {
       out.push(finding('1.3.1','moderate',h,text,
         `Heading levels skip from ${prev} to ${h.level}.`,
-        `Change this heading to level ${prev + 1}, or add the missing intermediate heading, so the outline has no gaps.`));
+        doc.metadata?.format === 'pdf'
+          ? `Edit this heading’s tag in a PDF accessibility editor. Set the correct level, such as H${prev + 1}, or tag an existing intermediate heading if one belongs in the outline.`
+          : `Change this heading to level ${prev + 1}, or add the missing intermediate heading, so the outline has no gaps.`));
     }
     prev = h.level;
+    previousPage = page;
   }
 
   for (const el of doc.elements) {
-    if (el.type === 'text' && looksLikeFakeHeading(el)) {
+    if (el.type === 'text' && !uncertainOrder && !uncertainPages.has(el.location?.page) && looksLikeFakeHeading(el)) {
       out.push(finding('1.3.1','moderate',el,el.text,
         'Text appears to be a section title but uses visual formatting instead of a semantic heading.',
         'Apply the appropriate heading style to this title instead of only making it bold or large, keeping levels consistent with the surrounding structure.'));
@@ -172,6 +185,11 @@ export function checkLinks(doc) {
 export function checkTables(doc) {
   const out = [];
   if (notExtracted(doc,'tables')) return out;
+  const guidance = {
+    html:'Use <th> for header cells. Add scope="row" or scope="col" so the headers identify the related data cells.',
+    docx:'Select the header row in Word and enable Repeat Header Rows. Verify the header associations after exporting the document.',
+    pdf:'In a PDF accessibility editor, set the header cells to TH and set their scope or associations with data cells. Verify the headers with a screen reader.',
+  }[doc.metadata?.format] ?? 'Mark the table’s header cells so a screen reader can announce the headers for the related data cells.';
   for (const el of doc.elements) {
     if (el.type !== 'table' || el.layout === true) continue;
     const rows = Number.isInteger(el.rows) ? el.rows : Array.isArray(el.cells) ? el.cells.length : null;
@@ -179,7 +197,7 @@ export function checkTables(doc) {
     if (el.has_header_row !== true && el.has_header_column !== true) {
       out.push(finding('1.3.1','moderate',el,el.caption || 'Table',
         'A data table has no header row or column defined.',
-        'Mark the table’s header cells (for example, “Repeat as header row” in Word or <th> in HTML) so screen readers can announce the header for each cell.'));
+        guidance));
     }
   }
   return out;
@@ -221,6 +239,31 @@ export function checkFormLabels(doc) {
   return doc.elements
     .filter(el => el.type === 'form_control' && el.labelled !== true)
     .map(el => finding('4.1.2','moderate',el,el.text || el.control_type || 'Form control',
-      'A form control has no associated label or accessible name.',
-      'Associate a visible label with the control or provide a programmatically determinable accessible name that clearly identifies its purpose.'));
+      el.pdf_field ? 'A PDF form field has no accessible name.' : 'A form control has no associated label or accessible name.',
+      el.pdf_field ? 'Set a descriptive Tooltip in the PDF form editor, or a label for a pushbutton. Verify the announced name with a screen reader.'
+        : 'Associate a visible label with the control or provide a programmatically determinable accessible name that clearly identifies its purpose.'));
+}
+
+export function pdfReviewNotes(doc) {
+  const notes = [];
+  for (const element of doc.elements) {
+    const page = element.location?.page;
+    if (element.type === 'pdf_scan' && element.ocr !== 'no_text') {
+      const description = {
+        text:'OCR found text in this page’s image. The uploaded page lacks a usable text layer.',
+        unavailable:'This page may be a scan. Text recognition was unavailable.',
+        budget:'This page may be a scan. Text recognition reached the processing budget.',
+      }[element.ocr];
+      if (description) notes.push({page, description,
+        suggested_fix:'Run OCR on the original PDF if the page contains text. Check the recognized text, then add or verify the PDF tags and reading order.'});
+    } else if (element.type === 'pdf_reading_order') {
+      notes.push({page, description:'The PDF tag order may differ from the visual reading order.',
+        suggested_fix:'Read the page with a screen reader. If it reads the columns or paragraphs in the wrong order, reorder the tags in a PDF editor and check again.'});
+    }
+  }
+  for (const page of doc.metadata?.unknown_heading_pages ?? []) {
+    notes.push({page, description:'Some heading tags on this page could not be matched to the page text.',
+      suggested_fix:'Inspect the heading tags and verify that a screen reader announces the expected headings and levels.'});
+  }
+  return notes.sort((a,b) => a.page - b.page);
 }

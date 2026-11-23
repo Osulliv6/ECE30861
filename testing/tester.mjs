@@ -233,10 +233,10 @@ export const TEAM_EXTENSION_SUITE = [
   }},
 ];
 
-// Component and system coverage count pod-defined items exercised by at least one executed test.
+// Count items for which a shared test reached a pass/fail verdict.
 function podCoverage(spec, results) {
   if (!spec.items) return {covered:null, total:null, basis:spec.basis};
-  const executed = new Set(results.filter(r => r.outcome !== 'skip').map(r => r.test_id));
+  const executed = new Set(results.filter(r => r.outcome === 'pass' || r.outcome === 'fail').map(r => r.test_id));
   const items = Object.values(spec.items);
   return {covered:items.filter(tests => tests.some(t => executed.has(t))).length, total:items.length, basis:spec.basis};
 }

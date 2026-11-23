@@ -105,6 +105,7 @@ async function remediateRequest(req, res, parserOptions) {
       changes:result.changes,
       issues_before:before.issues,
       issues_after:after.issues,
+      ...(after.review_notes ? {review_notes:after.review_notes} : {}),
       message:REMEDIATION_MESSAGE,
     });
   } catch (error) { return uploadFailure(res,error); }
@@ -135,7 +136,7 @@ const TEST_ROUTES = {
   '/tester/test/report':{method:'GET',source:'tester',run:(api,req,url)=>api.tester.report(url.searchParams.get('session_id'))},
 };
 
-// parserOptions: {python, timeoutMs, tmpRoot} for the Python parser bridge (defaults suit production).
+// parserOptions: {python, timeoutMs, tmpRoot, maxOutputBytes} for the Python parser bridge (defaults suit production).
 // One JSON line per request. Uploaded file names and contents are never logged; error details may name a test session ID.
 // Successful health checks and static files are skipped to keep the hosting platform's checks out of the log.
 function logRequest(log, req, res, path, started) {

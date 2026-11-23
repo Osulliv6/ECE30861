@@ -174,6 +174,56 @@ def tagged_pdf():
     _write_pdf(OUT / 'tagged.pdf', objects)
 
 
+def pdf_review_fixtures():
+    # A raster-only page and a text/raster mix. Render the source page before insertion
+    # so the scan has no embedded text even though its visible words are legible.
+    with fitz.open() as source, fitz.open() as mixed:
+        page = source.new_page(width=380, height=290)
+        page.insert_text((36, 68), 'Course schedule', fontsize=22)
+        page.insert_text((36, 103), 'Read chapter one before lab.', fontsize=14)
+        image = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+        mixed.new_page(width=380, height=290).insert_text((36, 68), 'Native digital text')
+        scanned = mixed.new_page(width=380, height=290)
+        scanned.insert_image(scanned.rect, pixmap=image)
+        mixed.set_metadata({'title':'Scanned syllabus'})
+        mixed.xref_set_key(mixed.pdf_catalog(), 'Lang', '(en-US)')
+        mixed.save(OUT / 'mixed-scan.pdf', deflate=True, no_new_id=True)
+
+    with fitz.open() as doc:
+        page = doc.new_page(width=400, height=280)
+        page.insert_text((40, 56), 'Enrollment form', fontsize=18)
+        for index, tooltip in enumerate(['Student name', '']):
+            widget = fitz.Widget()
+            widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+            widget.field_name = f'field_{index}'
+            widget.field_label = tooltip
+            widget.rect = fitz.Rect(40, 84 + index * 56, 250, 115 + index * 56)
+            page.add_widget(widget)
+        doc.set_metadata({'title':'Enrollment form'})
+        doc.xref_set_key(doc.pdf_catalog(), 'Lang', '(en-US)')
+        doc.save(OUT / 'pdf-fields.pdf', no_new_id=True)
+
+    # Identical page content, with two orders for the logical tag tree.
+    positions = [(48, 700, 'Left column first'), (48, 650, 'Left column second'),
+                 (320, 700, 'Right column first'), (320, 650, 'Right column second')]
+    stream = b'\n'.join(f'/P <</MCID {i}>> BDC BT /F1 12 Tf {x} {y} Td ({label}) Tj ET EMC'.encode()
+                         for i, (x, y, label) in enumerate(positions))
+    for name, sequence in [('reading-order-correct.pdf', '8 0 R 9 0 R 10 0 R 11 0 R'),
+                           ('reading-order-mismatch.pdf', '8 0 R 10 0 R 9 0 R 11 0 R')]:
+        _write_pdf(OUT / name, [
+            b'<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 6 0 R /Lang (en-US) >>',
+            b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+            b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R '
+            b'/Resources << /Font << /F1 4 0 R >> >> /StructParents 0 >>',
+            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+            _stream(stream),
+            b'<< /Type /StructTreeRoot /K [7 0 R] /ParentTree << /Nums [0 [8 0 R 9 0 R 10 0 R 11 0 R]] >> >>',
+            f'<< /Type /StructElem /S /Document /P 6 0 R /K [{sequence}] >>'.encode(),
+            *(f'<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K {i} >>'.encode() for i in range(4)),
+            b'<< /Title (Two-column handout) >>',
+        ])
+
+
 def encrypted_pdf():
     doc = fitz.open()
     doc.new_page().insert_text((72, 72), 'Secret', fontsize=12)
@@ -186,6 +236,7 @@ if __name__ == '__main__':
     default_language_docx()
     course_pdf()
     tagged_pdf()
+    pdf_review_fixtures()
     encrypted_pdf()
     (OUT / 'corrupt.docx').write_bytes(b'PK\x03\x04' + b'\x00not a real zip archive' * 4)
     (OUT / 'notes.txt').write_text('Week 1 notes\nRead chapter one before lab.\n')
