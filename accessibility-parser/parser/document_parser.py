@@ -13,6 +13,7 @@ from typing import Any
 
 from .css import StyleResolver
 from .pdf_tags import read_structure
+from .table_logic import table_semantics
 
 SUPPORTED_MIME_TYPES = [
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -334,11 +335,13 @@ def _html(path):
                 add_semantic_text(item, node)
                 walk(node)
             elif name=='table':
-                rows=node.find_all('tr')
-                header_row=bool(rows and rows[0].find('th'))
-                header_col=bool(rows and all(r.find('th',recursive=False) is not None for r in rows))
-                _add(elements,{'type':'table','rows':len(rows),'has_header_row':header_row,
-                               'has_header_column':header_col,'layout':str(node.get('role') or '').lower() in ('presentation','none'),
+# Keep nested-table handling from main and role='none' support from this PR.
+                rows = [r for r in node.find_all('tr') if r.find_parent('table') is node]
+                row_count, header_row, header_col = table_semantics(node)
+                _add(elements, {'type': 'table', 'rows': row_count,
+                                'has_header_row': header_row,
+                                'has_header_column': header_col,
+                                'layout': str(node.get('role') or '').lower() in ('presentation', 'none'),
                                'caption':_clean(node.caption.get_text(' ',strip=True)) if node.caption else '',
                                'location':loc(node)})
                 for r in rows:
