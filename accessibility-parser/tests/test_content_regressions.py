@@ -66,9 +66,10 @@ def test_word_tables_preserve_cell_headings_colors_and_nested_tables(tmp_path, p
 @pytest.mark.parametrize('tag', ['p', 'h1', 'a'])
 def test_html_preserves_inline_color_overrides_without_duplicate_semantics(tmp_path, tag):
     path = tmp_path / 'mixed.html'
+    href = ' href="/course"' if tag == 'a' else ''
     path.write_text(f'''<html lang="en"><head><title>Test</title><style>
       .faint {{ color: #aaaaaa }}
-    </style></head><body><{tag} style="color:#000000">Readable
+    </style></head><body><{tag}{href} style="color:#000000">Readable
       <span class="faint">Faint <em>text</em></span>
       readable again</{tag}></body></html>''')
     elements = parse_document(path)['elements']

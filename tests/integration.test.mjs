@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createServer } from '../server.mjs';
 import { parseReport } from '../frontend/core.js';
+import { htmlByteBoundary, htmlElementBoundary } from './fixtures/html-boundary.mjs';
 
 const fixture = name => readFile(new URL(`./fixtures/documents/${name}`, import.meta.url));
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -172,16 +173,14 @@ test('a 10 MiB HTML file with 1.3 million elements is rejected quickly instead o
 });
 
 test('HTML element limit accepts exactly 150,000 and rejects 150,001 within 30 seconds', async () => {
-  const makeHtml = count => '<!doctype html><html lang="en"><head><title>Boundary</title></head><body>'
-    + '<i></i>'.repeat(count - 4) + '</body></html>';
-  const atLimit = Buffer.from(makeHtml(150_000));
+  const atLimit = htmlElementBoundary(150_000);
   const started = performance.now();
   let response = await upload(base, atLimit, {type:'text/html', name:'150000-elements.html'});
   assert.equal(response.status, 200);
   assert.equal(parseReport(await response.json()).issues.length, 0);
   assert.ok(performance.now() - started < 30_000, '150,000-element document exceeded 30 seconds');
 
-  const overLimit = Buffer.from(makeHtml(150_001));
+  const overLimit = htmlElementBoundary(150_001);
   const overStarted = performance.now();
   response = await upload(base, overLimit, {type:'text/html', name:'150001-elements.html'});
   assert.equal(response.status, 422);
@@ -282,4 +281,68 @@ test('static serving cannot escape the frontend folder and unknown paths return 
     assert.equal(response.status, 404, path);
     assert.equal((await response.json()).code, 'NOT_FOUND');
   }
+});
+
+test('HTML reports only unnamed exposed images, links, and controls at their source lines', async () => {
+  const source = `<!doctype html><html lang="en"><head><title>Course</title></head><body>
+    <img id="hidden" aria-hidden="true" src="blank.png">
+    <div aria-hidden="true"><img id="hidden-descendant" src="blank.png"></div>
+    <a id="hidden-only-link" href="/schedule"><img aria-hidden="true" alt="Schedule"></a>
+    <a id="svg-link" href="/schedule"><svg role="img"><title>Course schedule</title></svg></a>
+    <svg id="unnamed-svg" role="img"><circle r="5"/></svg>
+    <svg id="labelled-svg" role="img" aria-label="Lab seating"><circle r="5"/></svg>
+    <a id="anchor"></a><button id="empty-button"></button>
+    <button id="named-button"><img alt="Print syllabus"></button>
+    <input id="image-button" type="image" src="send.png"><input type="submit">
+    <span id="preferred" hidden>Weekly schedule</span>
+    <a id="name-precedence" href="/weekly" aria-labelledby="preferred" aria-label="Click here"></a>
+    </body></html>`;
+  const response = await upload(base, source, {type:'text/html', name:'accessible-names.html'});
+  assert.equal(response.status, 200);
+  const report = parseReport(await response.json());
+  assert.deepEqual(report.issues.map(issue => [issue.wcag_criterion, issue.location.selector, issue.location.line]), [
+    ['2.4.4','#hidden-only-link',4], ['1.1.1','#unnamed-svg',6],
+    ['4.1.2','#empty-button',8], ['4.1.2','#image-button',10],
+  ]);
+});
+
+test('text-heavy HTML at the 10 MiB limit returns a report despite the large parser result', async () => {
+  const source = htmlByteBoundary();
+  assert.equal(source.length, 10 * 1024 * 1024);
+  const started = performance.now();
+  const response = await upload(base, source, {type:'text/html', name:'text-heavy.html'});
+  assert.equal(response.status, 200);
+  assert.deepEqual(parseReport(await response.json()).issues, []);
+  assert.ok(performance.now() - started < 30_000);
+});
+
+test('parser result exceeding the output budget gets a specific 422 and removes temp files', async () => {
+  const limited = await start({parserOptions:{tmpRoot,maxOutputBytes:64}});
+  const response = await upload(limited, 'Course schedule', {type:'text/plain',name:'notes.txt'});
+  assert.equal(response.status, 422);
+  const error = await response.json();
+  assert.equal(error.code, 'UNPROCESSABLE_FILE');
+  assert.match(error.message, /analysis result exceeds/);
+  assert.deepEqual(await readdir(tmpRoot), []);
+});
+
+test('PDF reports scan and reading-order review notes by page, and flags only the unnamed widget', async () => {
+  const analyzePdf = async name => {
+    const response = await upload(base, await fixture(name), {type:'application/pdf', name});
+    assert.equal(response.status, 200);
+    return parseReport(await response.json());
+  };
+  const scan = await analyzePdf('mixed-scan.pdf');
+  assert.deepEqual(scan.review_notes.map(note => note.page), [2]);
+  assert.match(scan.review_notes[0].suggested_fix, /Run OCR/);
+  assert.ok(!JSON.stringify(scan).includes('Read chapter one before lab'));
+  assert.match(scan.issues[0].description, /not tagged/);
+  const fields = (await analyzePdf('pdf-fields.pdf')).issues.filter(issue => issue.wcag_criterion === '4.1.2');
+  assert.deepEqual(fields.map(issue => [issue.location.page, issue.location.snippet]), [[1,'field_1']]);
+  assert.match(fields[0].suggested_fix, /Tooltip/);
+  assert.equal((await analyzePdf('reading-order-correct.pdf')).review_notes, undefined);
+  const mismatch = await analyzePdf('reading-order-mismatch.pdf');
+  assert.deepEqual(mismatch.issues, []);
+  assert.equal(mismatch.review_notes[0].page, 1);
+  assert.match(mismatch.review_notes[0].description, /tag order may differ/);
 });

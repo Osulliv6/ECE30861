@@ -66,6 +66,8 @@ test('tester runs the full suite against this system once and stores an unchange
   assert.equal(report.target_url, base);
   assert.deepEqual(report.results.map(x => x.test_id), SUITE.map(t => t.id));
   assert.ok(report.results.every(x => x.outcome === 'pass' && x.message.trim()), JSON.stringify(report.results.filter(x => x.outcome !== 'pass')));
+  assert.deepEqual([report.coverage.component.covered, report.coverage.component.total], [4,5]);
+  assert.deepEqual([report.coverage.system.covered, report.coverage.system.total], [9,13]);
   for (const key of ['code', 'component', 'system']) assert.ok(report.coverage[key].basis.trim(), key);
   assert.equal((await post(`${base}/tester/test/run`, {session_id})).status, 409);
   assert.deepEqual(await (await fetch(`${base}/tester/test/report?session_id=${session_id}`)).json(), report);
@@ -109,6 +111,7 @@ test('tester records system errors, failed expectations, timeouts, and unsupport
   for (const id of ['T-07', 'T-08', 'T-11', 'T-15']) assert.equal(byId[id].outcome, 'skip', id);
   assert.match(report.coverage.code.basis, /HTTP 503/);
   assert.equal(report.coverage.code.covered, null);
+  assert.deepEqual([report.coverage.component.covered, report.coverage.component.total], [1,5]);
 
   const wrong = await fakeTarget({'/test/setup':setupOk, '/analyze':(req, res) => json(res, 200, {issues:[{description:'incomplete'}]})});
   const s2 = (await (await post(`${base}/tester/test/setup`, {target_url:wrong})).json()).session_id;

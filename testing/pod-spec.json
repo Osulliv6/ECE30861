@@ -1,10 +1,30 @@
 {
   "components": {
-    "basis": "Components listed in the pod specification. Unavailable: the pod component list has not been added to testing/pod-spec.json yet.",
-    "items": null
+    "basis": "Team 20 draft using the five components in Team 19's Pod F tester. Counts components evaluated by a completed shared case (pass or fail). Pod confirmation pending.",
+    "items": {
+      "health": ["T-01"],
+      "formats": ["T-02"],
+      "validation": ["T-09", "T-10", "T-11", "T-12", "T-13"],
+      "analyze": ["T-03", "T-04", "T-05", "T-06", "T-07", "T-08", "T-14", "T-15", "T-16", "T-17", "T-18", "T-19"],
+      "test-interface": []
+    }
   },
   "acceptance_criteria": {
-    "basis": "Acceptance criteria listed in the pod specification. Unavailable: the pod acceptance criteria have not been added to testing/pod-spec.json yet.",
-    "items": null
+    "basis": "Team 20 draft for AC-01 through AC-13. Counts criteria exercised by a completed shared case (pass or fail). Manual and local-only evidence is documented separately. Pod confirmation pending.",
+    "items": {
+      "AC-01": ["T-06", "T-07", "T-08", "T-19"],
+      "AC-02": ["T-02", "T-09"],
+      "AC-03": ["T-10", "T-11", "T-16", "T-19"],
+      "AC-04": ["T-03", "T-04", "T-05", "T-07", "T-14", "T-15", "T-17", "T-18"],
+      "AC-05": ["T-03", "T-04", "T-07", "T-14", "T-15", "T-18"],
+      "AC-06": [],
+      "AC-07": ["T-18"],
+      "AC-08": ["T-06"],
+      "AC-09": [],
+      "AC-10": [],
+      "AC-11": [],
+      "AC-12": ["T-16", "T-19"],
+      "AC-13": ["T-01", "T-02", "T-06", "T-08", "T-18", "T-19"]
+    }
   }
 }

@@ -73,12 +73,20 @@ function renderReport(report,{sample=false,name=state.documentName,level=state.l
   $('sample-banner').hidden=!sample;$('sample-reset').hidden=!sample;
   $('report-label').textContent=sample?'EXAMPLE REVIEW':'COMPLETED REVIEW';
   const n=report.issues.length;
-  $('report-title').textContent=n?`${n} ${n===1?'finding':'findings'} to review`:'No supported violations detected';
+  const reviewNotes=report.review_notes ?? [];
+  $('report-title').textContent=n?`${n} ${n===1?'finding':'findings'} to review`:(reviewNotes.length?'Manual PDF review needed':'No supported violations detected');
   $('issue-count').textContent=n;$('report-document').textContent=`${name} · WCAG 2.1 ${level}`;
   const message = n === 0 ? 'No supported violations were detected within the checks performed. This does not certify full ADA or WCAG compliance.' : report.message;
   $('report-message').hidden=!message;$('report-message').textContent=typeof message==='string'?message:'';
+  $('manual-review').hidden=reviewNotes.length===0;
+  $('manual-review-notes').replaceChildren(...reviewNotes.map(note=>{
+    const item=document.createElement('li');
+    addText(item,'strong','',`Page ${note.page}. ${note.description}`);
+    addText(item,'p','fix',note.suggested_fix);
+    return item;
+  }));
   $('filter-bar').hidden=n===0;$('severity-filter').value='all';renderFindings();
-  announce(`${sample?'Sample report. ':''}${n?`${n} findings to review.`:'No supported violations detected. This does not certify full compliance.'}`);
+  announce(`${sample?'Sample report. ':''}${n?`${n} findings to review.`:'No supported violations detected. This does not certify full compliance.'}${reviewNotes.length?` ${reviewNotes.length} manual review ${reviewNotes.length===1?'note':'notes'}.`:''}`);
   $('report-title').focus();
 }
 $('severity-filter').addEventListener('change',()=>{renderFindings();announce($('filter-count').textContent+' findings shown.');});
@@ -96,7 +104,7 @@ async function submitDocument(repair){
     const data=await requestJson(state.base,repair?'/remediate':'/analyze',{method:'POST',body,signal:state.controller.signal,timeoutMs:REQUEST_TIMEOUT_MS});
     if(id!==state.requestId)return;
     const result=repair?parseRemediation(data):null;
-    const report=repair?{issues:result.issues_after,message:result.message}:parseReport(data);
+    const report=repair?{issues:result.issues_after,message:result.message,...(result.review_notes?{review_notes:result.review_notes}:{})}:parseReport(data);
     setBusy(false);state.controller=null;
     // Release the selected upload; reports remain only in page memory.
     state.file=null;$('file-input').value='';$('file-summary').hidden=true;refreshButton();renderReport(report);

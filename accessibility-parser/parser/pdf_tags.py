@@ -44,7 +44,8 @@ class StructureReader:
         self.nodes = 0
         self.visited: set[int] = set()
         self.role_map: dict[str, str] = {}
-        self.marked_content: dict[tuple[int, int], str] = {}
+        self.heading_counts: dict[int | None, int] = {}
+        self.marked_content: dict[tuple[int, int], str | None] = {}
 
     def key(self, xref: int, name: str) -> tuple[str, str]:
         try:
@@ -110,7 +111,9 @@ class StructureReader:
         top, _ = self.kids(root)
         for kid in top:
             self._walk(kid, None, out)
-        out['marked_content'] = {key: value for key, value in self.marked_content.items()}
+        out['marked_content'] = self.marked_content
+        out['heading_counts'] = self.heading_counts
+        out['has_parent_tree'] = self.key(root, 'ParentTree')[0] != 'null'
         return out
 
     def _walk(self, xref: int, inherited_page: int | None, out: dict) -> int | None:
@@ -125,13 +128,15 @@ class StructureReader:
         out['elements'] += 1
         role = self.role(xref)
         own_page = self.page_numbers.get(_ref(self.key(xref, 'Pg')) or -1)
-        marked_id = self.key(xref, 'K')
-        if role and own_page and marked_id[0] == 'int':
-            self.marked_content[(own_page, int(marked_id[1]))] = role
         kids, hint = self.kids(xref)
         page = own_page or hint or inherited_page
+        marked_id = self.key(xref, 'K')
+        if role and page and marked_id[0] == 'int':
+            key = (page, int(marked_id[1]))
+            self.marked_content[key] = None if key in self.marked_content else role
         if role and re.fullmatch(r'H[1-6]?', role):
             out['headings'] += 1
+            self.heading_counts[page] = self.heading_counts.get(page, 0) + 1
         if role == 'Figure':
             alt = _string(self.key(xref, 'Alt'))
             if not (alt or '').strip():

@@ -45,6 +45,11 @@ export function parseReport(data) {
     const l = issue.location;
     if (l !== null && (typeof l !== 'object' || Array.isArray(l) || !['selector','line','page','snippet'].some(k=>Object.hasOwn(l,k)) || ['selector','snippet'].some(k=>Object.hasOwn(l,k) && typeof l[k] !== 'string') || ['line','page'].some(k=>Object.hasOwn(l,k) && (!Number.isInteger(l[k]) || l[k]<1)))) throw new ApiError('A finding has an invalid location.', 'INVALID_RESPONSE');
   }
+  if (data.review_notes !== undefined && (!Array.isArray(data.review_notes) || data.review_notes.some(
+    note => !note || !Number.isInteger(note.page) || note.page < 1 ||
+      typeof note.description !== 'string' || !note.description.trim() ||
+      typeof note.suggested_fix !== 'string' || !note.suggested_fix.trim()
+  ))) throw new ApiError('The service returned an invalid manual review note.', 'INVALID_RESPONSE');
   return data;
 }
 const HTTP_ERRORS = {400:'The request could not be accepted.',413:'The file exceeds the service’s size limit.',415:'The service does not support this file type.',422:'The file is empty, corrupt, or unreadable and could not be evaluated.',503:'The analysis service or a required AI service is temporarily unavailable. Please try again.'};
@@ -87,7 +92,7 @@ export function parseRemediation(data) {
   for (const change of data.changes) {
     if (!change || typeof change.wcag_criterion !== 'string' || !/^\d+\.\d+\.\d+$/.test(change.wcag_criterion) || typeof change.description !== 'string' || !change.description.trim() || typeof change.needs_review !== 'boolean' || !Object.hasOwn(change,'location')) throw new ApiError('A repair is missing required fields.', 'INVALID_RESPONSE');
   }
-  for (const key of ['issues_before','issues_after']) parseReport({issues:data[key], message:data.message});
+  for (const key of ['issues_before','issues_after']) parseReport({issues:data[key], message:data.message, review_notes:data.review_notes});
   return data;
 }
 export function base64ToBytes(base64) {

@@ -1,7 +1,7 @@
 // Accessibility analysis / WCAG engine.
 // Input: a parsed document (see README "Accessibility engine" for the format).
 // Output: the shared report contract consumed by the frontend: {issues:[...], message?}.
-import { checkAltText, checkHeadings, checkContrast, checkLinks, checkTables, checkMetadata, checkTagging, checkFormLabels } from './checks.mjs';
+import { checkAltText, checkHeadings, checkContrast, checkLinks, checkTables, checkMetadata, checkTagging, checkFormLabels, pdfReviewNotes } from './checks.mjs';
 
 export class EngineError extends Error {
   constructor(message, code = 'INVALID_PARSED_DOCUMENT') { super(message); this.name = 'EngineError'; this.code = code; }
@@ -49,5 +49,10 @@ export function analyze(doc, {wcagLevel = 'AA'} = {}) {
     // Document-level findings (no location) first, then reading order by page and line.
     .sort((a,b)=>(a.issue.location?.page ?? 0)-(b.issue.location?.page ?? 0) || (a.issue.location?.line ?? 0)-(b.issue.location?.line ?? 0) || a.i-b.i)
     .map(({issue})=>issue);
-  return issues.length ? {issues} : {issues, message:NO_ISSUE_MESSAGE};
+  const report = issues.length ? {issues} : {issues, message:NO_ISSUE_MESSAGE};
+  if (doc.metadata?.format === 'pdf') {
+    const notes = pdfReviewNotes(doc);
+    if (notes.length) report.review_notes = notes;
+  }
+  return report;
 }

@@ -87,3 +87,16 @@ test('contrast is skipped when the parser could not determine the colors',()=>{
   assert.deepEqual(run([{type:'text',text:'On an image',contrast_unknown:true}]).issues,[]);
   assert.deepEqual(criteria(run([{type:'link',text:'Syllabus',href:'/s',color:'#bbbbbb'}])),['1.4.3']);
 });
+
+test('uncertain PDF headings keep verified findings and avoid gaps across unavailable pages', () => {
+  const report = analyze({
+    metadata:{format:'pdf',title:'Outline',language:'en',tagged:true,unknown_heading_pages:[2]},
+    elements:[
+      {type:'heading',level:1,text:'Start',location:{page:1}},
+      {type:'heading',level:3,text:'Recovered',location:{page:3}},
+      {type:'heading',level:5,text:'Verified gap',location:{page:3}},
+    ],
+  });
+  assert.deepEqual(report.issues.map(issue => issue.location.snippet), ['Verified gap']);
+  assert.equal(report.review_notes[0].page, 2);
+});

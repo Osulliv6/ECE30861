@@ -62,10 +62,20 @@ def _check_html_complexity(raw: str):
     accepted document. Using ``HTMLParser`` here made an exactly-at-limit page
     take a second complete Python-level parse before its real parse.
     """
-    opening_tag = re.compile(r'<[A-Za-z][A-Za-z0-9:_-]*(?=[\s/>])')
-    for count, _ in enumerate(opening_tag.finditer(raw), start=1):
-        if count > MAX_HTML_ELEMENTS:
-            raise ParseError('UNPROCESSABLE_FILE', 'HTML document exceeds the supported element limit.')
+    # Skip comments, raw text and quoted attributes so literal markup does not
+    # count as DOM elements. The builder still enforces the authoritative cap.
+    tokens = re.compile(
+        r'<!--.*?(?:-->|\Z)|'
+        r'<(script|style)(?=[\s/>])(?:[^>"\']|"[^"]*"|\'[^\']*\')*>.*?(?:</\1\s*>|\Z)|'
+        r'<[A-Za-z][A-Za-z0-9:_-]*(?=[\s/>])(?:[^>"\']|"[^"]*"|\'[^\']*\')*>',
+        re.I | re.S,
+    )
+    count = 0
+    for token in tokens.finditer(raw):
+        if not token.group().startswith('<!--'):
+            count += 1
+            if count > MAX_HTML_ELEMENTS:
+                raise ParseError('UNPROCESSABLE_FILE', 'HTML document exceeds the supported element limit.')
 
 def _add(elements, item):
     elements.append(item)
@@ -213,7 +223,7 @@ def _docx(path):
                                           'Header/footer extraction is by section, not visual page order']}}
 
 def _html(path):
-    from bs4 import BeautifulSoup, NavigableString, Tag
+    from bs4 import BeautifulSoup, Comment, NavigableString, Tag
     raw=Path(path).read_text(encoding='utf-8-sig')
     # Do a lightweight count before allocating BeautifulSoup nodes. On a document
     # far above the cap this exits at element 150,001 instead of constructing
@@ -226,54 +236,117 @@ def _html(path):
     # Resolve embedded and inline CSS before <style> elements are removed.
     styles=StyleResolver(soup)
     if styles.external_stylesheets: metadata['external_stylesheets']=styles.external_stylesheets
-    for unwanted in soup(['script','style','noscript','template']): unwanted.decompose()
-    root=soup.body or soup
-    elements=[]; counter=[0]
+    ids, labels, candidates, unwanted = {}, {}, [], []
+    for node in soup.descendants:
+        if not isinstance(node, Tag):
+            continue
+        if node.name in ('script','style','noscript','template'):
+            unwanted.append(node)
+        elif node.has_attr('id') or (node.name == 'label' and node.has_attr('for')):
+            candidates.append(node)
+    for node in unwanted:
+        if node.name is not None:
+            node.decompose()
+    for node in candidates:
+        if node.name is None:
+            continue
+        if node.has_attr('id'):
+            ids.setdefault(str(node['id']), node)
+        if node.name == 'label' and node.has_attr('for'):
+            labels.setdefault(str(node['for']), []).append(node)
+    root = soup.body or soup
+    elements = []
+
     def loc(tag):
-        counter[0]+=1
-        out={'line':counter[0]}
-        if tag.get('id'): out['selector']='#'+str(tag['id'])
+        out = {'line':tag.sourceline} if tag.sourceline else {}
+        if tag.get('id'):
+            out['selector'] = '#' + str(tag['id'])
         return out
-    separate = {'a','img','table','p','li','blockquote','pre','figcaption',
-                'h1','h2','h3','h4','h5','h6'}
-    ids = {str(node.get('id')):node for node in soup.find_all(id=True)}
-    def aria_name(node):
-        # ARIA naming takes precedence over native HTML naming when nonempty.
-        aria = _clean(node.get('aria-label'))
-        if aria: return aria
-        referenced = []
-        for ident in str(node.get('aria-labelledby') or '').split():
-            target = ids.get(ident)
-            if target:
-                text = _clean(target.get_text(' ', strip=True))
-                if text: referenced.append(text)
-        return ' '.join(referenced)
-    def form_control_label(node):
-        accessible = aria_name(node)
-        if accessible: return accessible
-        ident = node.get('id')
-        if ident:
-            label = soup.find('label', attrs={'for':str(ident)})
-            if label:
-                text = _clean(label.get_text(' ', strip=True))
-                if text: return text
+
+    headings = {f'h{i}' for i in range(1, 7)}
+    separate = {'a', 'img', 'table', 'p', 'li', 'blockquote', 'pre', 'figcaption', *headings}
+
+    def aria_hidden(node):
+        value = node.get('aria-hidden')
+        return bool(value and value.strip().lower() == 'true')
+
+    def hidden_from_at(node):
+        return styles.hidden(node) or aria_hidden(node) or any(aria_hidden(parent) for parent in node.parents)
+
+    def is_image(node):
+        return node.name == 'img' or (node.name == 'svg' and 'img' in str(node.get('role') or '').lower().split())
+
+    def aria_name(node, allow_references=True):
+        if allow_references:
+            referenced = []
+            for ident in dict.fromkeys(str(node.get('aria-labelledby') or '').split()):
+                target = ids.get(ident)
+                if target is not None:
+                    # A directly referenced hidden label can contribute its contents.
+                    hidden_reference = hidden_from_at(target)
+                    ref_name = aria_name(target, allow_references=False)
+                    referenced.append(ref_name or content_name(target, hidden_reference, allow_references=False))
+            if any(referenced):
+                return _clean(' '.join(referenced))
+        return _clean(node.get('aria-label'))
+
+    def image_name(node, allow_references=True):
+        name = aria_name(node, allow_references)
+        if name:
+            return name
+        if node.name == 'img':
+            return node.get('alt') if node.has_attr('alt') else None
+        title = node.find('title', recursive=False)
+        return (_clean(title.get_text(' ', strip=True)) or None) if title else None
+
+    def content_name(node, allow_hidden=False, allow_references=True):
+        if is_image(node):
+            return _clean(image_name(node, allow_references))
+        parts = []
+        for child in node.children:
+            if isinstance(child, Comment):
+                continue
+            if isinstance(child, NavigableString):
+                parts.append(str(child))
+            elif isinstance(child, Tag) and (allow_hidden or not (aria_hidden(child) or styles.hidden(child))):
+                parts.append(content_name(child, allow_hidden, allow_references))
+        return _clean(' '.join(parts))
+
+    def form_control_label(node, input_type):
+        name = aria_name(node)
+        if name:
+            return name
+        attached = labels.get(str(node.get('id')), [])
         wrapping = node.find_parent('label')
-        if wrapping:
-            text = _clean(wrapping.get_text(' ', strip=True))
-            if text: return text
-        return ''
+        if wrapping is not None and not wrapping.has_attr('for'):
+            attached = [*attached, wrapping]
+        name = _clean(' '.join(content_name(label) for label in attached if not hidden_from_at(label)))
+        if name:
+            return name
+        if node.name == 'button':
+            name = content_name(node)
+        elif input_type == 'image':
+            name = _clean(node.get('alt'))
+        elif input_type in ('submit', 'reset'):
+            name = _clean(node.get('value')) or input_type
+        elif input_type == 'button':
+            name = _clean(node.get('value'))
+        return name or _clean(node.get('title'))
+
     def text_runs(tag):
         # Resolve formatting at the text node's own parent, not at its paragraph.
         runs = []
         def collect(parent):
             for child in parent.children:
+                if isinstance(child, Comment):
+                    continue
                 if isinstance(child, NavigableString):
                     style = styles.text_style(parent)
                     if runs and runs[-1][1] == style:
                         runs[-1][0] += str(child)
                     else:
                         runs.append([str(child), style])
-                elif isinstance(child, Tag) and child.name not in separate:
+                elif isinstance(child, Tag) and child.name not in separate and not is_image(child):
                     if child.name == 'br' and runs:
                         runs[-1][0] += ' '
                     else:
@@ -292,49 +365,37 @@ def _html(path):
             for text, style in runs:
                 _add(elements, {'type':'text', 'text':text, 'standalone':False,
                                 'location':item['location'], **style})
-    def walk(tag):
+    def walk(tag, ancestor_hidden=False):
         for node in tag.children:
-            if not isinstance(node,Tag): continue
-            name=node.name.lower()
-            if re.fullmatch(r'h[1-6]',name):
+            if not isinstance(node, Tag):
+                continue
+            name = node.name
+            hidden = ancestor_hidden or aria_hidden(node)
+            if not hidden and name in headings:
                 item={'type':'heading','level':int(name[1]),'text':_clean(node.get_text(' ',strip=True)),'location':loc(node)}
                 add_semantic_text(item, node)
                 # Links/images inside headings still need independent checks.
                 walk(node)
-            elif name=='img':
-                # Keep the existing engine contract: effective accessible name in alt.
-                # An explicit empty alt remains decorative unless ARIA supplies a name.
-                alt=aria_name(node)
-                if not alt: alt=node.get('alt') if node.has_attr('alt') else None
-                _add(elements,{'type':'image','alt':alt,'decorative':alt=='',
-                               'src':node.get('src'),'location':loc(node)})
-            elif name in ('input','select','textarea'):
+            elif is_image(node):
+                if hidden or styles.hidden(node):
+                    continue
+                alt = image_name(node)
+                _add(elements, {'type':'image', 'alt':alt, 'decorative':name == 'img' and alt == '',
+                                'src':node.get('src'), 'location':loc(node)})
+            elif name in ('input','select','textarea','button'):
                 input_type = str(node.get('type') or 'text').lower() if name == 'input' else name
-                if name != 'input' or input_type not in ('hidden','submit','reset','button','image'):
-                    label = form_control_label(node)
-                    _add(elements,{'type':'form_control','control_type':input_type,
-                                   'labelled':bool(label),'text':label or input_type,
-                                   'location':loc(node)})
-            elif name=='a':
-                link_name = aria_name(node)
-                if not link_name:
-                    # Image-only links are named by their image's accessible name.
-                    # Preserve text alongside image names in mixed-content links.
-                    names = []
-                    for descendant in node.descendants:
-                        if isinstance(descendant, NavigableString):
-                            if not descendant.find_parent(['script','style','noscript']):
-                                text = _clean(str(descendant))
-                                if text: names.append(text)
-                        elif isinstance(descendant, Tag) and descendant.name == 'img':
-                            img_name = aria_name(descendant) or _clean(descendant.get('alt'))
-                            if img_name: names.append(img_name)
-                    link_name = _clean(' '.join(names))
+                if not hidden and input_type != 'hidden' and not styles.hidden(node):
+                    label = form_control_label(node, input_type)
+                    _add(elements, {'type':'form_control', 'control_type':input_type,
+                                    'labelled':bool(label), 'text':label or input_type,
+                                    'location':loc(node)})
+            elif not hidden and name=='a' and node.has_attr('href') and not styles.hidden(node):
+                link_name = aria_name(node) or content_name(node) or _clean(node.get('title'))
                 item={'type':'link','text':link_name,
                       'href':node.get('href'),'location':loc(node)}
                 add_semantic_text(item, node)
                 walk(node)
-            elif name=='table':
+            elif not hidden and name=='table':
                 rows = own_rows(node)  # excludes rows of nested tables
                 row_count, header_row, header_col = table_semantics(node, rows)
                 _add(elements, {'type': 'table', 'rows': row_count,
@@ -344,8 +405,9 @@ def _html(path):
                                'caption':_clean(node.caption.get_text(' ',strip=True)) if node.caption else '',
                                'location':loc(node)})
                 for r in rows:
-                    for c in r.find_all(['td','th'],recursive=False): walk(c)
-            elif name in ('p','li','blockquote','pre','figcaption'):
+                    for c in r.find_all(['td','th'], recursive=False):
+                        walk(c, aria_hidden(r) or aria_hidden(c) or any(aria_hidden(parent) for parent in r.parents if parent is not node))
+            elif name in ('p','li','blockquote','pre','figcaption','a') or name in headings:
                 runs = text_runs(node)
                 if runs:
                     location = loc(node)
@@ -353,9 +415,10 @@ def _html(path):
                         _add(elements, {'type':'text', 'text':text,
                                         'standalone':len(runs)==1,
                                         'location':location, **style})
-                walk(node)
-            else: walk(node)
-    walk(root)
+                walk(node, hidden)
+            else:
+                walk(node, hidden)
+    walk(root, aria_hidden(root) or any(aria_hidden(parent) for parent in root.parents))
     return {'metadata':metadata,'elements':elements,
             'parser_info':{'format':'html','reading_order':'DOM order',
                            'limitations':['External stylesheets (<link>) are not fetched; embedded <style> and inline styles are evaluated',
@@ -397,11 +460,10 @@ def _pdf_first_span(blocks):
                     if s.get('text','').strip(): return s
     return None
 
-def _pdf_tagged_page(blocks, page_index, elements, stats):
+def _pdf_tagged_page(blocks, page_index, elements):
     """Headings and text from MuPDF's structured text, which follows the tag tree."""
     for b in blocks:
         if 'std' in b or 'raw' in b:
-            stats['structure_blocks']+=1
             role=b.get('std') or b.get('raw')
             children=b.get('blocks',[])
             if role in HEADING_ROLES:
@@ -413,57 +475,47 @@ def _pdf_tagged_page(blocks, page_index, elements, stats):
             elif role in ('Figure','Artifact'):
                 continue  # Figures come from the tag tree with their alt text; text inside a chart is part of it.
             else:
-                _pdf_tagged_page(children, page_index, elements, stats)
+                _pdf_tagged_page(children, page_index, elements)
         elif b.get('type')==0:
             _pdf_text_lines(b, page_index, elements)
 
-def _pdf_tagged_fallback(doc, page, page_index, structure, elements, stats):
-    """Keep tagged text when MuPDF cannot expose its collected structure blocks.
-
-    Some tagged PDFs have a valid ParentTree but PyMuPDF's structure collector returns
-    no blocks. In that case, align text-bearing marked-content sequences in the page
-    stream with MuPDF's ordinary text blocks, then use the PDF structure tree's roles.
-    We only claim headings when every extracted text block maps unambiguously.
-    """
-    import re
-    plain = page.get_text('dict', sort=False)['blocks']
-    text_blocks = [b for b in plain if b.get('type') == 0]
-    mcids = []
-    pattern = re.compile(rb'/[^\s/<>()\[\]]+\s*<<\s*/MCID\s+(\d+)[^>]*>>\s*BDC(.*?)EMC', re.S)
-    for stream_xref in page.get_contents():
-        content = doc.xref_stream(stream_xref) or b''
-        for match in pattern.finditer(content):
-            if re.search(rb'\bBT\b', match.group(2)):
-                mcids.append(int(match.group(1)))
-    if len(mcids) != len(text_blocks):
-        # Plain text remains useful, but don't assign tag semantics by guesswork.
-        for block in plain:
-            if block.get('type') == 0:
-                _pdf_text_lines(block, page_index, elements)
-        return False
-    roles = structure.get('marked_content', {})
-    for block, mcid in zip(text_blocks, mcids):
-        role = roles.get((page_index, mcid))
+def _pdf_tagged_fallback(blocks, by_mcid, roles, page_index, elements):
+    # Tag order is independent of the order in which the page paints its text.
+    for mcid in roles:
+        block = by_mcid.get(mcid)
+        if block is None:
+            continue
+        role = roles[mcid]
         if role in HEADING_ROLES:
-            text = _clean(' '.join(span.get('text', '') for line in block.get('lines', [])
-                                    for span in line.get('spans', [])))
-            if text:
-                item = {'type':'heading', 'level':HEADING_ROLES[role], 'text':text,
-                        'location':{'page':page_index}}
-                first = next((span for line in block.get('lines', []) for span in line.get('spans', [])
-                              if span.get('text', '').strip()), None)
-                if first:
-                    item.update(_pdf_span_style(first))
-                _add(elements, item)
-        else:
+            from .pdf_review import block_text
+            item = {'type':'heading', 'level':HEADING_ROLES[role], 'text':block_text(block),
+                    'location':{'page':page_index}}
+            span = _pdf_first_span([block])
+            if span:
+                item.update(_pdf_span_style(span))
+            _add(elements, item)
+        elif role not in ('Figure', 'Artifact'):
             _pdf_text_lines(block, page_index, elements)
-    stats['structure_blocks'] += len(mcids)
-    return True
+    mapped = {id(block) for block in by_mcid.values()}
+    for block in blocks:
+        if id(block) not in mapped:
+            _pdf_text_lines(block, page_index, elements)
+
 
 def _pdf(path):
     import pymupdf as fitz
-    doc=fitz.open(path)
-    if doc.needs_pass: raise ParseError('UNPROCESSABLE_FILE','Password-protected PDFs are not supported.')
+
+    with fitz.open(path) as doc:
+        if doc.needs_pass:
+            raise ParseError('UNPROCESSABLE_FILE','Password-protected PDFs are not supported.')
+        return _read_pdf(doc)
+
+
+def _read_pdf(doc):
+    import pymupdf as fitz
+    from .pdf_review import ScanOCR, match_marked_text, reading_order_differs, scan_candidate, widget_label
+
+    ocr = ScanOCR()
     structure=read_structure(doc)
     tagged=bool(structure and structure['elements'])
     metadata={'title':_clean(doc.metadata.get('title')),'language':None,'format':'pdf','tagged':tagged}
@@ -471,14 +523,47 @@ def _pdf(path):
         lang=doc.pdf_catalog() and doc.xref_get_key(doc.pdf_catalog(),'Lang')
         if lang and lang[0]=='string': metadata['language']=lang[1].strip('()')
     except Exception: pass
-    elements=[]; stats={'structure_blocks':0}
-    for page_index,page in enumerate(doc,1):
+    elements = []
+    unknown_heading_pages = []
+    roles_by_page = {}
+    if tagged:
+        for (page_number, mcid), role in structure['marked_content'].items():
+            roles_by_page.setdefault(page_number, {})[mcid] = role
+    for page_index, page in enumerate(doc, 1):
+        location = {'page':page_index}
+        text_blocks = page.get_text('dict', flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES,
+                                    sort=not tagged)['blocks']
+        if scan_candidate(page, text_blocks):
+            _add(elements, {'type':'pdf_scan', 'ocr':ocr.check(page), 'location':location})
+        for widget in page.widgets():
+            flag_type, flags = doc.xref_get_key(widget.xref, 'F')
+            hidden_flags = fitz.PDF_ANNOT_IS_INVISIBLE | fitz.PDF_ANNOT_IS_HIDDEN | fitz.PDF_ANNOT_IS_NO_VIEW
+            if (flag_type == 'int' and int(flags) & hidden_flags) or not widget.rect.intersects(page.rect):
+                continue
+            label = widget_label(doc, widget)
+            _add(elements, {'type':'form_control', 'pdf_field':True, 'labelled':bool(label),
+                            'text':label or widget.field_name or 'PDF form field', 'location':location})
         if tagged:
-            blocks=page.get_text('dict',flags=fitz.TEXTFLAGS_DICT|fitz.TEXT_COLLECT_STRUCTURE)['blocks']
-            if blocks:
-                _pdf_tagged_page(blocks, page_index, elements, stats)
+            roles = roles_by_page.get(page_index, {}) if structure['has_parent_tree'] else {}
+            ids = match_marked_text(doc, page, text_blocks) if roles else []
+            by_mcid = {mcid:block for mcid, block in zip(ids, text_blocks)
+                       if mcid is not None and roles.get(mcid)}
+            block_indexes = {mcid:i for i, mcid in enumerate(ids) if mcid in by_mcid}
+            if all(role in {'P', 'H', *HEADING_ROLES} for role in roles.values()):
+                order = [block_indexes[mcid] for mcid in roles if mcid in block_indexes]
+                if len(order) == len(roles) and reading_order_differs(text_blocks, order):
+                    _add(elements, {'type':'pdf_reading_order', 'location':location})
+            blocks = page.get_text('dict', flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES
+                                   | fitz.TEXT_COLLECT_STRUCTURE)['blocks']
+            before = len(elements)
+            if any('std' in block or 'raw' in block for block in blocks):
+                _pdf_tagged_page(blocks, page_index, elements)
             else:
-                _pdf_tagged_fallback(doc, page, page_index, structure, elements, stats)
+                _pdf_tagged_fallback(text_blocks, by_mcid, roles, page_index, elements)
+            expected = structure['heading_counts'].get(page_index, 0)
+            observed = sum(element['type'] == 'heading' for element in elements[before:])
+            if observed < expected:
+                unknown_heading_pages.append(page_index)
             for number,figure in enumerate(structure['figures'],1):
                 if figure['page']==page_index:
                     _add(elements,{'type':'image','alt':figure['alt'],'decorative':False,'src':f'Figure {number}',
@@ -491,13 +576,11 @@ def _pdf(path):
                                    'has_header_column':bool(rows) and all(r and r[0]=='TH' for r in rows),
                                    'layout':False,'location':{'page':page_index}})
         else:
-            for block in page.get_text('dict',sort=True)['blocks']:
-                if block['type']==1:
-                    # An untagged PDF cannot carry alt text; the engine reports the missing tags instead.
-                    _add(elements,{'type':'image','alt':None,'decorative':False,
-                                   'src':f"page-{page_index}-image-{block.get('number',0)}",'location':{'page':page_index}})
-                elif block['type']==0:
-                    _pdf_text_lines(block, page_index, elements)
+            for number, image in enumerate(page.get_image_info(), 1):
+                _add(elements, {'type':'image', 'alt':None, 'decorative':False,
+                                'src':f'page-{page_index}-image-{number}', 'location':location})
+            for block in text_blocks:
+                _pdf_text_lines(block, page_index, elements)
         # PDF link target rectangles may not cleanly correspond to extracted words.
         for link in page.get_links():
             if not link.get('uri'): continue
@@ -512,18 +595,23 @@ def _pdf(path):
                      {'type':'table','rows':len(rows),'has_header_row':bool(rows) and 'TH' in rows[0],
                       'has_header_column':bool(rows) and all(r and r[0]=='TH' for r in rows),'layout':False})
         # Without a ParentTree MuPDF cannot map page content to tags, so heading text is unknown.
-        if not stats['structure_blocks'] and structure['headings']:
-            metadata['not_extracted']=['headings']
+        if unknown_heading_pages:
+            metadata['unknown_heading_pages'] = unknown_heading_pages
+        if (structure['truncated'] or None in structure['heading_counts'] or unknown_heading_pages) and not any(
+            element['type'] == 'heading' for element in elements
+        ):
+            metadata['not_extracted'] = ['headings']
+        if structure['truncated'] or None in structure['heading_counts']:
+            metadata['heading_order_unknown'] = True
     else:
         # Untagged: headings, tables and alt text do not exist for assistive technology.
         # The engine reports the missing tags once instead of guessing structure from fonts.
         metadata['not_extracted']=['alt_text','headings','tables']
-    doc.close()
-    limitations=['Background colors and OCR of scanned pages are not supported',
+    limitations=['PDF background colors are not evaluated; scan OCR is limited to three candidate pages in English',
                  'PDF links are appended per page after extracted page content']
     if tagged:
-        limitations+=['Structure roles other than headings, figures, and tables are not evaluated',
-                      'Reading order of tags versus visual order is not compared']
+        limitations+=['Structure checks cover headings, figures, tables, and interactive field names',
+                      'Reading-order review is limited to unambiguous text in simple layouts']
     else:
         limitations+=['The PDF is untagged, so heading, table, and image semantics are absent']
     return {'metadata':metadata,'elements':elements,
