@@ -237,7 +237,8 @@ def _html(path):
     separate = {'a','img','table','p','li','blockquote','pre','figcaption',
                 'h1','h2','h3','h4','h5','h6'}
     ids = {str(node.get('id')):node for node in soup.find_all(id=True)}
-    def form_control_label(node):
+    def aria_name(node):
+        # ARIA naming takes precedence over native HTML naming when nonempty.
         aria = _clean(node.get('aria-label'))
         if aria: return aria
         referenced = []
@@ -246,7 +247,10 @@ def _html(path):
             if target:
                 text = _clean(target.get_text(' ', strip=True))
                 if text: referenced.append(text)
-        if referenced: return ' '.join(referenced)
+        return ' '.join(referenced)
+    def form_control_label(node):
+        accessible = aria_name(node)
+        if accessible: return accessible
         ident = node.get('id')
         if ident:
             label = soup.find('label', attrs={'for':str(ident)})
@@ -298,7 +302,10 @@ def _html(path):
                 # Links/images inside headings still need independent checks.
                 walk(node)
             elif name=='img':
-                alt=node.get('alt') if node.has_attr('alt') else None
+                # Keep the existing engine contract: effective accessible name in alt.
+                # An explicit empty alt remains decorative unless ARIA supplies a name.
+                alt=aria_name(node)
+                if not alt: alt=node.get('alt') if node.has_attr('alt') else None
                 _add(elements,{'type':'image','alt':alt,'decorative':alt=='',
                                'src':node.get('src'),'location':loc(node)})
             elif name in ('input','select','textarea'):
@@ -309,16 +316,32 @@ def _html(path):
                                    'labelled':bool(label),'text':label or input_type,
                                    'location':loc(node)})
             elif name=='a':
-                item={'type':'link','text':_clean(node.get_text(' ',strip=True)),
+                link_name = aria_name(node)
+                if not link_name:
+                    # Image-only links are named by their image's accessible name.
+                    # Preserve text alongside image names in mixed-content links.
+                    names = []
+                    for descendant in node.descendants:
+                        if isinstance(descendant, NavigableString):
+                            if not descendant.find_parent(['script','style','noscript']):
+                                text = _clean(str(descendant))
+                                if text: names.append(text)
+                        elif isinstance(descendant, Tag) and descendant.name == 'img':
+                            img_name = aria_name(descendant) or _clean(descendant.get('alt'))
+                            if img_name: names.append(img_name)
+                    link_name = _clean(' '.join(names))
+                item={'type':'link','text':link_name,
                       'href':node.get('href'),'location':loc(node)}
                 add_semantic_text(item, node)
                 walk(node)
             elif name=='table':
-                # Nested tables are analyzed separately, not counted as outer rows.
+# Keep nested-table handling from main and role='none' support from this PR.
                 rows = [r for r in node.find_all('tr') if r.find_parent('table') is node]
                 row_count, header_row, header_col = table_semantics(node)
-                _add(elements,{'type':'table','rows':row_count,'has_header_row':header_row,
-                               'has_header_column':header_col,'layout':node.get('role')=='presentation',
+                _add(elements, {'type': 'table', 'rows': row_count,
+                                'has_header_row': header_row,
+                                'has_header_column': header_col,
+                                'layout': str(node.get('role') or '').lower() in ('presentation', 'none'),
                                'caption':_clean(node.caption.get_text(' ',strip=True)) if node.caption else '',
                                'location':loc(node)})
                 for r in rows:
